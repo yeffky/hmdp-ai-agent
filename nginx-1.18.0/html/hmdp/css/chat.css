@@ -1,0 +1,117 @@
+/* AI Customer Service Chat Bubble */
+
+.chat-bubble-btn {
+    position: fixed;
+    bottom: 12%;
+    right: 20px;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: #ff6633;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    cursor: pointer;
+    z-index: 9999;
+    box-shadow: 0 2px 12px rgba(255, 102, 51, 0.4);
+    transition: transform 0.2s;
+}
+
+.chat-bubble-btn:hover {
+    transform: scale(1.1);
+}
+
+.chat-window {
+    position: fixed;
+    bottom: 12%;
+    right: 20px;
+    width: 340px;
+    max-height: 480px;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    display: flex;
+    flex-direction: column;
+    z-index: 9999;
+    overflow: hidden;
+}
+
+.chat-header {
+    background: #ff6633;
+    color: #fff;
+    padding: 12px 16px;
+    font-size: 15px;
+    font-weight: 500;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.chat-header i {
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    max-height: 340px;
+    background: #f5f5f5;
+}
+
+.chat-msg {
+    margin-bottom: 10px;
+    display: flex;
+}
+
+.chat-msg.user {
+    justify-content: flex-end;
+}
+
+.chat-msg.user .msg-content {
+    background: #ff6633;
+    color: #fff;
+    border-radius: 12px 12px 4px 12px;
+}
+
+.chat-msg.assistant .msg-content {
+    background: #fff;
+    color: #333;
+    border-radius: 12px 12px 12px 4px;
+    border: 1px solid #eee;
+}
+
+.msg-content {
+    max-width: 80%;
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.msg-content.typing {
+    color: #999;
+    font-style: italic;
+}
+
+.chat-input {
+    display: flex;
+    padding: 8px 10px;
+    border-top: 1px solid #eee;
+    background: #fff;
+    gap: 8px;
+    align-items: center;
+}
+
+.chat-input .el-input {
+    flex: 1;
+}
+
+.chat-input .el-button--primary {
+    background: #ff6633;
+    border-color: #ff6633;
+}

@@ -1,0 +1,41 @@
+# Build output
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# IDE
+.idea/
+*.iws
+*.iml
+*.ipr
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+.vscode/
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# Claude Code
+.claude/
+
+# Nginx
+nginx-1.18.0/logs/
+nginx-1.18.0/temp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sensitive config (keep template)
+# application.yaml contains placeholders; create your own local copy
