@@ -132,22 +132,64 @@ ollama pull bge-m3
 
 ### 4. 配置
 
-复制 `application.example.yaml` → `application.yaml`，填入真实配置：
+复制 `application.example.yaml` → `application.yaml`，按实际环境填入配置：
 
 ```yaml
+# ========== MySQL 数据库 ==========
+spring:
+  datasource:
+    driver-class-name: com.mysql.jdbc.Driver
+    url: jdbc:mysql://your-mysql-host:3306/hmdp?useSSL=false&serverTimezone=UTC
+    username: root
+    password: your-database-password
+
+# ========== Redis ==========
+  redis:
+    host: your-redis-host
+    port: 6379
+    password: your-redis-password
+    lettuce:
+      pool:
+        max-active: 10
+        max-idle: 10
+        min-idle: 1
+
+# ========== AI 大模型 ==========
 deepseek:
-  api-key: your-deepseek-api-key
+  api-key: your-deepseek-api-key       # https://platform.deepseek.com/api_keys
   base-url: https://api.deepseek.com/v1
   model: deepseek-chat
+  temperature: 0.7
+  max-tokens: 2000
 
+# ========== RAG 检索增强 ==========
 rag:
+  # 向量数据库
   qdrant:
-    host: http://localhost
-    port: 6333
+    host: http://localhost              # Qdrant 服务地址
+    port: 6333                          # REST API 端口
+    collection: hmdp_knowledge          # 集合名称
+    vector-size: 1024                   # bge-m3 = 1024, 其他模型按需调整
+    distance: Cosine
+
+  # Embedding 模型（OpenAI 兼容格式）
   embedding:
-    base-url: http://localhost:11434/v1
-    model: bge-m3
+    base-url: http://localhost:11434/v1 # Ollama 默认地址
+    api-key: ollama                     # Ollama 不需要真实 key
+    model: bge-m3                       # 中文推荐 bge-m3 / bge-large-zh-v1.5
+
+  # 检索参数
+  retrieval:
+    top-k: 5                            # 每次检索返回的文档片段数
+    score-threshold: 0.3                # 最低相似度阈值（0~1）
+
+  # 文档切片
+  splitter:
+    chunk-size: 500                     # 每个 chunk 的目标字数
+    chunk-overlap: 50                   # 相邻 chunk 重叠字数
 ```
+
+> 💡 所有含密码/密钥的配置项必须填写真实值。`application.yaml` 已加入 `.gitignore`，不会被提交到 Git。
 
 ### 5. 启动
 
