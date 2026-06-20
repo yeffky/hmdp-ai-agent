@@ -83,7 +83,7 @@
         var self = this;
         this.$nextTick(function() { self.scrollToBottom(); });
 
-        axios.post('/chat/send', {
+        axios.post('/chat/rag', {
           sessionId: this.sessionId,
           message: text
         }, { timeout: 60000 })

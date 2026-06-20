@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知识库管理 - 黑马点评 RAG</title>
+    <link rel="stylesheet" href="css/element.css">
+    <style>
+        body { margin: 0; background: #f5f7fa; font-family: 'Helvetica Neue', Arial, sans-serif; }
+        .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+        .header { background: #fff; padding: 20px 30px; border-radius: 8px; margin-bottom: 20px;
+                  box-shadow: 0 1px 4px rgba(0,0,0,0.06); display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { margin: 0; font-size: 20px; color: #303133; }
+        .stats { display: flex; gap: 16px; }
+        .stat-item { text-align: center; }
+        .stat-num { font-size: 28px; font-weight: bold; color: #409eff; }
+        .stat-label { font-size: 12px; color: #909399; margin-top: 4px; }
+        .card { background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 16px;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        .card h2 { margin: 0 0 16px; font-size: 16px; color: #303133; border-bottom: 2px solid #409eff;
+                   padding-bottom: 8px; display: inline-block; }
+        .result-item { background: #f5f7fa; border-radius: 6px; padding: 12px 16px; margin-bottom: 10px;
+                       border-left: 3px solid #409eff; }
+        .result-meta { font-size: 11px; color: #909399; margin-bottom: 4px; }
+        .result-text { font-size: 13px; color: #303133; line-height: 1.6; white-space: pre-wrap; }
+        .score-badge { display: inline-block; background: #e6f7ff; color: #1890ff; padding: 2px 8px;
+                       border-radius: 10px; font-size: 11px; margin-left: 8px; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <div>
+                <h1>📚 知识库管理后台</h1>
+                <span style="font-size:12px;color:#909399;">检索增强生成 (RAG) 最小闭环</span>
+            </div>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-num">{{ stats.totalPoints }}</div>
+                    <div class="stat-label">向量总数</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 文档摄取 -->
+        <div class="card">
+            <h2>📥 文档摄取</h2>
+            <el-form :model="ingestForm" label-width="80px" size="small">
+                <el-form-item label="来源类型">
+                    <el-select v-model="ingestForm.source" placeholder="选择来源" style="width:200px">
+                        <el-option label="帮助文档 (faq)" value="faq"></el-option>
+                        <el-option label="商家信息 (shop)" value="shop"></el-option>
+                        <el-option label="平台规则 (rule)" value="rule"></el-option>
+                        <el-option label="博客笔记 (blog)" value="blog"></el-option>
+                        <el-option label="其他 (manual)" value="manual"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="标题">
+                    <el-input v-model="ingestForm.title" placeholder="文档标题"></el-input>
+                </el-form-item>
+                <el-form-item label="内容">
+                    <el-input type="textarea" v-model="ingestForm.content" :rows="6"
+                              placeholder="粘贴文档正文内容..."></el-input>
+                </el-form-item>
+                <el-form-item>
+                    <el-button type="primary" @click="ingest" :loading="ingesting">提交摄入</el-button>
+                    <el-button @click="ingestForm={source:'faq',title:'',content:''}">重置</el-button>
+                </el-form-item>
+            </el-form>
+            <div v-if="ingestResult" style="margin-top:12px;">
+                <el-alert :title="ingestResult" :type="ingestSuccess?'success':'error'" show-icon></el-alert>
+            </div>
+        </div>
+
+        <!-- 检索测试 -->
+        <div class="card">
+            <h2>🔍 检索测试</h2>
+            <el-form inline size="small">
+                <el-form-item>
+                    <el-input v-model="searchQuery" placeholder="输入测试查询..."
+                              style="width:400px" @keyup.enter.native="search"></el-input>
+                </el-form-item>
+                <el-form-item>
+                    <el-button type="primary" @click="search" :loading="searching">检索</el-button>
+                </el-form-item>
+            </el-form>
+            <div v-if="searchResults.length > 0">
+                <div v-for="(r, i) in searchResults" :key="i" class="result-item">
+                    <div class="result-meta">
+                        来源: {{ r.source }} | {{ r.title }}
+                        <span class="score-badge">{{ (r.score * 100).toFixed(1) }}%</span>
+                    </div>
+                    <div class="result-text">{{ r.text }}</div>
+                </div>
+            </div>
+            <div v-if="searched && searchResults.length === 0" style="color:#909399;margin-top:12px;">
+                知识库中未找到相关内容
+            </div>
+        </div>
+
+        <!-- RAG 问答测试 -->
+        <div class="card">
+            <h2>🤖 RAG 问答测试</h2>
+            <el-form inline size="small">
+                <el-form-item>
+                    <el-input v-model="ragQuery" placeholder="输入问题测试 RAG..."
+                              style="width:400px" @keyup.enter.native="ragChat"></el-input>
+                </el-form-item>
+                <el-form-item>
+                    <el-button type="success" @click="ragChat" :loading="ragLoading">问答</el-button>
+                </el-form-item>
+            </el-form>
+            <div v-if="ragAnswer" class="result-item" style="border-left-color:#67c23a;">
+                <div class="result-meta">🤖 AI 回答</div>
+                <div class="result-text">{{ ragAnswer }}</div>
+            </div>
+        </div>
+
+        <!-- 种子数据快捷导入 -->
+        <div class="card">
+            <h2>🌱 种子数据导入</h2>
+            <p style="font-size:12px;color:#909399;">快速导入示例知识库数据，用于测试 RAG 闭环。</p>
+            <el-button size="small" type="warning" @click="seedData" :loading="seeding">导入示例问答</el-button>
+        </div>
+    </div>
+</div>
+
+<script src="js/vue.js"></script>
+<script src="js/axios.min.js"></script>
+<script src="js/element.js"></script>
+<script>
+new Vue({
+    el: '#app',
+    data: {
+        stats: { totalPoints: 0 },
+        ingestForm: { source: 'faq', title: '', content: '' },
+        ingesting: false, ingestResult: '', ingestSuccess: false,
+        searchQuery: '', searching: false, searched: false,
+        searchResults: [],
+        ragQuery: '', ragLoading: false, ragAnswer: '',
+        seeding: false
+    },
+    created() { this.loadStats(); },
+    methods: {
+        loadStats() {
+            axios.get('/kb/stats').then(r => {
+                if (r.data && r.data.data) this.stats = r.data.data;
+            }).catch(() => {});
+        },
+        ingest() {
+            if (!this.ingestForm.content.trim()) { this.$message.warning('请输入内容'); return; }
+            this.ingesting = true;
+            axios.post('/kb/ingest', this.ingestForm).then(r => {
+                this.ingestResult = r.data.data || r.data.msg || '摄入成功';
+                this.ingestSuccess = true;
+                this.loadStats();
+            }).catch(e => {
+                this.ingestResult = '摄入失败: ' + (e.response?.data?.msg || e.message);
+                this.ingestSuccess = false;
+            }).finally(() => { this.ingesting = false; });
+        },
+        search() {
+            if (!this.searchQuery.trim()) return;
+            this.searching = true; this.searched = false;
+            axios.get('/kb/search', { params: { q: this.searchQuery, topK: 5 } }).then(r => {
+                this.searchResults = (r.data && r.data.data) || [];
+                this.searched = true;
+            }).catch(() => {
+                this.searchResults = [];
+                this.searched = true;
+            }).finally(() => { this.searching = false; });
+        },
+        ragChat() {
+            if (!this.ragQuery.trim()) return;
+            this.ragLoading = true; this.ragAnswer = '';
+            axios.post('/chat/rag', {
+                sessionId: 'kb_admin_' + Date.now(),
+                message: this.ragQuery
+            }).then(r => {
+                this.ragAnswer = r.data.data || r.data || '无回答';
+            }).catch(e => {
+                this.ragAnswer = '请求失败: ' + (e.response?.data?.msg || e.message);
+            }).finally(() => { this.ragLoading = false; });
+        },
+        seedData() {
+            this.seeding = true;
+            const items = [
+                { source:'faq', title:'如何注册账号', content:'注册黑马点评账号非常简单。打开黑马点评首页，点击右上角的"注册"按钮，输入手机号码并获取验证码，设置密码后即可完成注册。注册即送50元新人礼包。' },
+                { source:'faq', title:'优惠券使用规则', content:'优惠券使用规则：1. 每张优惠券仅限在指定商家使用；2. 优惠券不可叠加使用，每个订单只能使用一张；3. 优惠券有有效期，过期自动失效；4. 优惠券在下单支付时自动抵扣；5. 如发生退款，优惠券金额不予退还。' },
+                { source:'faq', title:'退款政策', content:'退款政策：未使用的优惠券订单支持随时退款，款项将在3-5个工作日内退回原支付方式。已核销的优惠券不支持退款。退款申请方法：进入"我的订单"页面，选择需要退款的订单，点击"申请退款"按钮，填写退款原因后提交即可。我们的客服会在24小时内审核处理。' },
+                { source:'rule', title:'平台投诉处理规范', content:'投诉处理流程：1. 用户可通过客服入口提交投诉；2. 客服在1小时内响应投诉；3. 对于商家违规行为，平台将在24小时内核实；4. 核实属实后，平台将对商家采取警告、下架或封禁措施；5. 用户可在"我的投诉"中查看处理进度。' },
+                { source:'rule', title:'商家入驻标准', content:'商家入驻黑马点评平台的标准：1. 需有合法的营业执照和卫生许可证；2. 店铺评分需保持在3.5分以上；3. 不得有虚假宣传行为；4. 需按照平台要求提供完整菜单和服务信息；5. 入驻费用为首年免费，次年根据销量阶梯收费。' }
+            ];
+            let done = 0;
+            const total = items.length;
+            items.forEach(item => {
+                axios.post('/kb/ingest', item).then(() => {
+                    done++;
+                    if (done >= total) {
+                        this.$message.success(`成功导入 ${total} 条种子数据`);
+                        this.loadStats();
+                    }
+                }).catch(() => { done++; });
+            });
+            this.seeding = false;
+        }
+    }
+});
+</script>
+</body>
+</html>

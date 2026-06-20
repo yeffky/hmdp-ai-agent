@@ -1,6 +1,7 @@
 package com.hmdp.agent;
 
 import com.hmdp.agent.memory.MySqlChatMemory;
+import com.hmdp.agent.tool.KnowledgeRetrievalTool;
 import com.hmdp.agent.tool.OrderQueryTool;
 import com.hmdp.mapper.ChatMessageMapper;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -39,8 +40,11 @@ public class AgentConfig {
     @Resource
     private OrderQueryTool orderQueryTool;
 
+    @Resource
+    private KnowledgeRetrievalTool knowledgeRetrievalTool;
+
     @Bean
-    public OpenAiChatModel chatLanguageModel() {
+    public OpenAiChatModel openAiChatModel() {
         return OpenAiChatModel.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
@@ -57,7 +61,7 @@ public class AgentConfig {
                 .chatLanguageModel(model)
                 .chatMemoryProvider(sessionId -> new MySqlChatMemory(
                         sessionId.toString(), chatMessageMapper, 20))
-                .tools(orderQueryTool)
+                .tools(orderQueryTool, knowledgeRetrievalTool)
                 .build();
     }
 }

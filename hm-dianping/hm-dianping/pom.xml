@@ -15,6 +15,7 @@
     <description>Demo project for Spring Boot</description>
     <properties>
         <java.version>1.8</java.version>
+        <langchain4j.version>0.31.0</langchain4j.version>
     </properties>
     <dependencies>
         <dependency>
@@ -86,16 +87,16 @@
             <artifactId>redisson</artifactId>
             <version>3.13.6</version>
         </dependency>
-        <!-- LangChain4j AI Agent Framework (0.31.0 = last version supporting Java 8) -->
+        <!-- LangChain4j AI Agent Framework (0.35.0 = Java 17, proper DeepSeek support) -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j</artifactId>
-            <version>0.31.0</version>
+            <version>${langchain4j.version}</version>
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
-            <version>0.31.0</version>
+            <version>${langchain4j.version}</version>
         </dependency>
     </dependencies>
 

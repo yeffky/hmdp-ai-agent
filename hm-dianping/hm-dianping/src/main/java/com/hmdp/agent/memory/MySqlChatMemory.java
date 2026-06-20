@@ -1,13 +1,9 @@
 package com.hmdp.agent.memory;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.hmdp.entity.ChatMessage;
 import com.hmdp.mapper.ChatMessageMapper;
 import com.hmdp.utils.UserHolder;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessageType;
-import dev.langchain4j.data.message.ToolExecutionResultMessage;
-import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.data.message.*;
 import dev.langchain4j.memory.ChatMemory;
 
 import java.time.LocalDateTime;
@@ -15,9 +11,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Custom ChatMemory implementation that persists messages to MySQL.
- * Short-term: in-memory message window (configured by load limit).
- * Long-term: all messages written to tb_chat_message for audit and future retrieval.
+ * 带 MySQL 持久化的 ChatMemory，同时修复 DeepSeek 不兼容 role=function 的问题。
+ *
+ * 修复原理：LangChain4j 0.31 将 ToolExecutionResultMessage 序列化为 role=function，
+ * 但 DeepSeek API 只接受 role=tool / system / user / assistant。
+ * 通过 add() 中将 ToolExecutionResultMessage 转为 SystemMessage 来绕过。
  */
 public class MySqlChatMemory implements ChatMemory {
 
@@ -25,14 +23,13 @@ public class MySqlChatMemory implements ChatMemory {
     private final Object id;
     private final ChatMessageMapper mapper;
     private final int maxMessages;
-    private final List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
+    private final List<ChatMessage> messages = new ArrayList<>();
 
     public MySqlChatMemory(String sessionId, ChatMessageMapper mapper, int maxMessages) {
         this.sessionId = sessionId;
         this.id = sessionId;
         this.mapper = mapper;
         this.maxMessages = maxMessages;
-        // Load recent history from DB
         loadFromDb();
     }
 
@@ -42,14 +39,14 @@ public class MySqlChatMemory implements ChatMemory {
     }
 
     private void loadFromDb() {
-        List<ChatMessage> dbMessages = mapper.selectList(
-                new QueryWrapper<ChatMessage>()
+        List<com.hmdp.entity.ChatMessage> dbMessages = mapper.selectList(
+                new QueryWrapper<com.hmdp.entity.ChatMessage>()
                         .eq("session_id", sessionId)
                         .orderByAsc("create_time")
                         .last("LIMIT " + maxMessages)
         );
-        for (ChatMessage m : dbMessages) {
-            dev.langchain4j.data.message.ChatMessage lcMsg = convertFromDb(m);
+        for (com.hmdp.entity.ChatMessage m : dbMessages) {
+            ChatMessage lcMsg = convertFromDb(m);
             if (lcMsg != null) {
                 messages.add(lcMsg);
             }
@@ -57,18 +54,23 @@ public class MySqlChatMemory implements ChatMemory {
     }
 
     @Override
-    public void add(dev.langchain4j.data.message.ChatMessage message) {
+    public void add(ChatMessage message) {
+        // ★ 修复：ToolExecutionResultMessage → SystemMessage
+        // 避免 LangChain4j 0.31 序列化为 role=function
+        if (message instanceof ToolExecutionResultMessage) {
+            ToolExecutionResultMessage trm = (ToolExecutionResultMessage) message;
+            message = SystemMessage.from(
+                    "[工具: " + trm.toolName() + " 执行结果]\n" + trm.text());
+        }
         messages.add(message);
-        // Trim if exceeds max
         while (messages.size() > maxMessages) {
             messages.remove(0);
         }
-        // Persist to DB
         persistToDb(message);
     }
 
     @Override
-    public List<dev.langchain4j.data.message.ChatMessage> messages() {
+    public List<ChatMessage> messages() {
         return new ArrayList<>(messages);
     }
 
@@ -77,8 +79,8 @@ public class MySqlChatMemory implements ChatMemory {
         messages.clear();
     }
 
-    private void persistToDb(dev.langchain4j.data.message.ChatMessage message) {
-        ChatMessage entity = new ChatMessage()
+    private void persistToDb(ChatMessage message) {
+        com.hmdp.entity.ChatMessage entity = new com.hmdp.entity.ChatMessage()
                 .setSessionId(sessionId)
                 .setUserId(getCurrentUserId())
                 .setCreateTime(LocalDateTime.now());
@@ -91,10 +93,13 @@ public class MySqlChatMemory implements ChatMemory {
             AiMessage aiMsg = (AiMessage) message;
             entity.setContent(aiMsg.text() != null ? aiMsg.text() : "");
             if (aiMsg.hasToolExecutionRequests()) {
-                // Record tool call intent
                 entity.setToolName("tool_request");
             }
+        } else if (message instanceof SystemMessage) {
+            entity.setRole("system");
+            entity.setContent(((SystemMessage) message).text());
         } else if (message instanceof ToolExecutionResultMessage) {
+            // 原始 tool 结果仍入库保留审计
             entity.setRole("tool");
             entity.setContent(((ToolExecutionResultMessage) message).text());
             entity.setToolName(((ToolExecutionResultMessage) message).toolName());
@@ -105,15 +110,19 @@ public class MySqlChatMemory implements ChatMemory {
         }
     }
 
-    private dev.langchain4j.data.message.ChatMessage convertFromDb(ChatMessage db) {
+    private ChatMessage convertFromDb(com.hmdp.entity.ChatMessage db) {
         if (db.getRole() == null) return null;
         switch (db.getRole()) {
             case "user":
                 return UserMessage.from(db.getContent());
             case "assistant":
                 return AiMessage.from(db.getContent());
+            // ★ 历史 tool/function 消息 → SystemMessage，避免 role=function
             case "tool":
-                return new ToolExecutionResultMessage(null, db.getToolName(), db.getContent());
+            case "function":
+                return SystemMessage.from("[历史工具: " + db.getToolName() + "]\n" + db.getContent());
+            case "system":
+                return SystemMessage.from(db.getContent());
             default:
                 return null;
         }

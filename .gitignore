@@ -37,5 +37,14 @@ nginx-1.18.0/temp/
 .DS_Store
 Thumbs.db
 
-# Sensitive config (keep template)
-# application.yaml contains placeholders; create your own local copy
+# Sensitive config — DO NOT commit real credentials
+# Copy application.example.yaml → application.yaml and fill in your values
+**/application.yaml
+!**/application.example.yaml
+
+# Generated tokens / secrets
+**/tokens.txt
+**/*.token
+
+# Maven local repo (accidentally tracked)
+**/.m2/
