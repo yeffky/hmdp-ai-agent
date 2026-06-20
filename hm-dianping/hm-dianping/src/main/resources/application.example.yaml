@@ -28,7 +28,9 @@ logging:
 
 deepseek:
   api-key: your-deepseek-api-key
-  base-url: https://api.deepseek.com/v1
+  # 走本地代理（自动修复 role=function -> role=tool），无需直接调用 DeepSeek
+  base-url: http://localhost:8081/api/deepseek-proxy/v1
+  real-base-url: https://api.deepseek.com/v1   # 代理最终转发的目标
   model: deepseek-chat
   temperature: 0.7
   max-tokens: 2000
