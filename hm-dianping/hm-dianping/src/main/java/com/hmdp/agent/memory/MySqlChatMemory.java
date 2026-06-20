@@ -3,7 +3,10 @@ package com.hmdp.agent.memory;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.mapper.ChatMessageMapper;
 import com.hmdp.utils.UserHolder;
-import dev.langchain4j.data.message.*;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.memory.ChatMemory;
 
 import java.time.LocalDateTime;
@@ -11,11 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 带 MySQL 持久化的 ChatMemory，同时修复 DeepSeek 不兼容 role=function 的问题。
- *
- * 修复原理：LangChain4j 0.31 将 ToolExecutionResultMessage 序列化为 role=function，
- * 但 DeepSeek API 只接受 role=tool / system / user / assistant。
- * 通过 add() 中将 ToolExecutionResultMessage 转为 SystemMessage 来绕过。
+ * 带 MySQL 持久化的 ChatMemory。
+ * 工具调用由 Controller 层前置处理，Agent 不再注册 @Tool。
  */
 public class MySqlChatMemory implements ChatMemory {
 
@@ -55,13 +55,6 @@ public class MySqlChatMemory implements ChatMemory {
 
     @Override
     public void add(ChatMessage message) {
-        // ★ 修复：ToolExecutionResultMessage → SystemMessage
-        // 避免 LangChain4j 0.31 序列化为 role=function
-        if (message instanceof ToolExecutionResultMessage) {
-            ToolExecutionResultMessage trm = (ToolExecutionResultMessage) message;
-            message = SystemMessage.from(
-                    "[工具: " + trm.toolName() + " 执行结果]\n" + trm.text());
-        }
         messages.add(message);
         while (messages.size() > maxMessages) {
             messages.remove(0);
@@ -98,11 +91,6 @@ public class MySqlChatMemory implements ChatMemory {
         } else if (message instanceof SystemMessage) {
             entity.setRole("system");
             entity.setContent(((SystemMessage) message).text());
-        } else if (message instanceof ToolExecutionResultMessage) {
-            // 原始 tool 结果仍入库保留审计
-            entity.setRole("tool");
-            entity.setContent(((ToolExecutionResultMessage) message).text());
-            entity.setToolName(((ToolExecutionResultMessage) message).toolName());
         }
 
         if (entity.getContent() != null) {
@@ -117,10 +105,6 @@ public class MySqlChatMemory implements ChatMemory {
                 return UserMessage.from(db.getContent());
             case "assistant":
                 return AiMessage.from(db.getContent());
-            // ★ 历史 tool/function 消息 → SystemMessage，避免 role=function
-            case "tool":
-            case "function":
-                return SystemMessage.from("[历史工具: " + db.getToolName() + "]\n" + db.getContent());
             case "system":
                 return SystemMessage.from(db.getContent());
             default:
