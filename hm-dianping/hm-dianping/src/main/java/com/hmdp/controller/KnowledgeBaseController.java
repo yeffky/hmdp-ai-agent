@@ -6,14 +6,14 @@ import com.hmdp.rag.model.IngestionRequest;
 import com.hmdp.rag.model.KnowledgeBaseStats;
 import com.hmdp.rag.model.SearchResult;
 import com.hmdp.rag.retrieval.RetrievalService;
+import com.hmdp.rag.splitter.MarkdownSplitter;
 import com.hmdp.rag.store.QdrantVectorStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -33,6 +33,9 @@ public class KnowledgeBaseController {
 
     @Resource
     private RetrievalService retrievalService;
+
+    @Resource
+    private MarkdownSplitter markdownSplitter;
 
     /** 摄取一篇文档到知识库 */
     @PostMapping("/ingest")
@@ -112,6 +115,47 @@ public class KnowledgeBaseController {
         } catch (Exception e) {
             log.error("检索失败", e);
             return Result.fail("检索失败: " + e.getMessage());
+        }
+    }
+
+    /** 切片预览 — 展示 Markdown/文本 切分后的结构 */
+    @PostMapping("/preview-split")
+    public Result previewSplit(@RequestBody IngestionRequest request) {
+        if (request.getContent() == null || request.getContent().trim().isEmpty()) {
+            return Result.fail("文档内容不能为空");
+        }
+        try {
+            List<Map<String, Object>> chunks = new ArrayList<>();
+            if (request.getContent().trim().startsWith("#")) {
+                // Markdown 结构感知切片
+                List<MarkdownSplitter.ChunkWithHeadings> result = markdownSplitter.split(request.getContent());
+                for (MarkdownSplitter.ChunkWithHeadings c : result) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("index", c.getIndex());
+                    m.put("headingPath", c.getHeadingPath());
+                    m.put("text", c.getText());
+                    m.put("length", c.getText().length());
+                    chunks.add(m);
+                }
+            } else {
+                // 通用文本切片（仅显示文本）
+                List<String> texts = markdownSplitter.splitPlain(request.getContent());
+                for (int i = 0; i < texts.size(); i++) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("index", i);
+                    m.put("headingPath", "");
+                    m.put("text", texts.get(i));
+                    m.put("length", texts.get(i).length());
+                    chunks.add(m);
+                }
+            }
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("totalChunks", chunks.size());
+            summary.put("chunks", chunks);
+            return Result.ok(summary);
+        } catch (Exception e) {
+            log.error("切片预览失败", e);
+            return Result.fail("切片失败: " + e.getMessage());
         }
     }
 }

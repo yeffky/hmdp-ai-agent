@@ -25,6 +25,15 @@
         .result-text { font-size: 13px; color: #303133; line-height: 1.6; white-space: pre-wrap; }
         .score-badge { display: inline-block; background: #e6f7ff; color: #1890ff; padding: 2px 8px;
                        border-radius: 10px; font-size: 11px; margin-left: 8px; }
+        .chunk-item { background: #fafafa; border-radius: 6px; padding: 10px 14px; margin-bottom: 8px;
+                      border: 1px solid #e8e8e8; }
+        .chunk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .chunk-path { font-size: 11px; color: #409eff; font-weight: 500; }
+        .chunk-meta { font-size: 10px; color: #c0c4cc; }
+        .chunk-text { font-size: 12px; color: #606266; line-height: 1.6; white-space: pre-wrap;
+                      max-height: 120px; overflow-y: auto; background: #fff; padding: 8px 10px;
+                      border-radius: 4px; border: 1px dashed #e8e8e8; }
+        .chunk-empty { font-size: 12px; color: #c0c4cc; text-align: center; padding: 20px; }
     </style>
 </head>
 <body>
@@ -71,6 +80,41 @@
             </el-form>
             <div v-if="ingestResult" style="margin-top:12px;">
                 <el-alert :title="ingestResult" :type="ingestSuccess?'success':'error'" show-icon></el-alert>
+            </div>
+        </div>
+
+        <!-- 切片预览 -->
+        <div class="card">
+            <h2>🔬 切片预览</h2>
+            <p style="font-size:12px;color:#909399;margin-bottom:12px;">
+                粘贴 Markdown 文本，预览 MarkdownSplitter 按标题层级切分后的结构。以 <code>#</code> 开头自动走 Markdown 模式。
+            </p>
+            <el-form label-width="0" size="small">
+                <el-form-item>
+                    <el-input type="textarea" v-model="splitContent" :rows="6"
+                              placeholder="粘贴 Markdown 文档..."></el-input>
+                </el-form-item>
+                <el-form-item>
+                    <el-button type="primary" @click="previewSplit" :loading="splitting">预览切片</el-button>
+                    <el-button @click="loadMdExample">加载 Markdown 示例</el-button>
+                </el-form-item>
+            </el-form>
+            <!-- 切片结果 -->
+            <div v-if="splitResult">
+                <div style="margin-bottom:10px;font-size:13px;color:#303133;">
+                    共 <b style="color:#409eff;">{{ splitResult.totalChunks }}</b> 个切片
+                </div>
+                <div v-if="splitResult.chunks.length === 0" class="chunk-empty">文档太短，无需切片</div>
+                <div v-for="(c, i) in splitResult.chunks" :key="i" class="chunk-item">
+                    <div class="chunk-header">
+                        <span class="chunk-path">
+                            🧩 切片 #{{ c.index }}
+                            <span v-if="c.headingPath" style="margin-left:8px;">📁 {{ c.headingPath }}</span>
+                        </span>
+                        <span class="chunk-meta">{{ c.length }} 字</span>
+                    </div>
+                    <div class="chunk-text">{{ c.text }}</div>
+                </div>
             </div>
         </div>
 
@@ -140,6 +184,7 @@ new Vue({
         searchQuery: '', searching: false, searched: false,
         searchResults: [],
         ragQuery: '', ragLoading: false, ragAnswer: '',
+        splitContent: '', splitting: false, splitResult: null,
         seeding: false
     },
     created() { this.loadStats(); },
@@ -183,6 +228,36 @@ new Vue({
             }).catch(e => {
                 this.ragAnswer = '请求失败: ' + (e.response?.data?.msg || e.message);
             }).finally(() => { this.ragLoading = false; });
+        },
+        previewSplit() {
+            if (!this.splitContent.trim()) { this.$message.warning('请输入 Markdown 内容'); return; }
+            this.splitting = true; this.splitResult = null;
+            axios.post('/kb/preview-split', { content: this.splitContent }).then(r => {
+                this.splitResult = r.data.data || { totalChunks: 0, chunks: [] };
+            }).catch(e => {
+                this.$message.error('切片失败: ' + (e.response?.data?.msg || e.message));
+            }).finally(() => { this.splitting = false; });
+        },
+        loadMdExample() {
+            this.splitContent = '# 黑马点评帮助中心\n\n' +
+              '## 注册与登录\n\n' +
+              '注册黑马点评账号非常简单。打开黑马点评首页，点击右上角的"注册"按钮，输入手机号码并获取验证码，设置密码后即可完成注册。注册即送50元新人礼包。\n\n' +
+              '登录支持手机号验证码登录和账号密码登录两种方式。如果忘记密码，可以通过绑定的手机号重置。\n\n' +
+              '### 第三方登录\n\n' +
+              '平台支持微信和支付宝快捷登录，首次使用第三方登录会自动创建账号。\n\n' +
+              '## 优惠券使用规则\n\n' +
+              '优惠券使用规则如下：\n\n' +
+              '1. 每张优惠券仅限在指定商家使用\n' +
+              '2. 优惠券不可叠加使用，每个订单只能使用一张\n' +
+              '3. 优惠券有有效期，过期自动失效\n' +
+              '4. 优惠券在下单支付时自动抵扣\n' +
+              '5. 如发生退款，优惠券金额不予退还\n\n' +
+              '### 获取优惠券\n\n' +
+              '用户可通过每日签到、参与平台活动、邀请好友等方式获取优惠券。新用户注册即送50元新人礼包。\n\n' +
+              '### 优惠券类型\n\n' +
+              '平台提供满减券、折扣券、免配送费券三种类型，不同商家支持的券类型可能不同，请在下单前查看优惠券使用说明。\n\n' +
+              '## 退款政策\n\n' +
+              '未使用的优惠券订单支持随时退款，款项将在3-5个工作日内退回原支付方式。已核销的优惠券不支持退款。退款申请方法：进入"我的订单"页面，选择需要退款的订单，点击"申请退款"按钮，填写退款原因后提交即可。客服会在24小时内审核处理。';
         },
         seedData() {
             this.seeding = true;
