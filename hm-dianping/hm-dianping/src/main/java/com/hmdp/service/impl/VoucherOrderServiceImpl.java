@@ -87,9 +87,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                     // 5.ACK确认
                     stringRedisTemplate.opsForStream().acknowledge(queueName, "g1", mapRecord.getId());
                 } catch (Exception e) {
-                    log.error("处理订单异常");
+                    log.error(e.getMessage());
                     handlePendingList();
                 }
+
+
             }
         }
 
@@ -116,7 +118,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                     // 5.ACK确认
                     stringRedisTemplate.opsForStream().acknowledge(queueName, "g1", mapRecord.getId());
                 } catch (Exception e) {
-                    log.error("处理订单异常");
+                    log.error(e.getMessage());
                     try {
                         Thread.sleep(20);
                     } catch (InterruptedException interruptedException) {

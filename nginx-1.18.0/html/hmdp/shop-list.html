@@ -47,7 +47,7 @@
       评分 <i class="el-icon-arrow-down el-icon--right"></i>
     </div>
   </div>
-  <div class="shop-list" @scroll="onScroll" style="height:calc(100vh - 140px);overflow-y:auto">
+  <div class="shop-list">
     <div class="shop-box" v-for="s in shops" :key="s.id" @click="toDetail(s.id)">
       <div class="shop-img"><img :src="s.images" alt=""></div>
       <div class="shop-info">
@@ -71,12 +71,8 @@
         </div>
       </div>
     </div>
-    <div style="text-align:center;padding:12px;" v-if="!isReachBottom">
-      <el-button type="primary" plain size="small" @click="loadMore" :loading="loadingMore">加载更多</el-button>
-    </div>
-    <div style="text-align:center;padding:12px;color:#909399;font-size:12px;" v-else>
-      — 已加载全部 —
-    </div>
+    <div style="text-align:center;padding:12px;color:#909399;font-size:12px;" v-if="!hasMore">— 已加载全部 —</div>
+    <div style="text-align:center;padding:12px;" v-if="loadingMore">加载中...</div>
   </div>
 </div>
 <script src="./js/vue.js"></script>
@@ -90,7 +86,7 @@
     el: "#app",
     data: {
       util,
-      isReachBottom: false,
+      hasMore: true,
       loadingMore: false,
       types: [], // 类型列表
       shops: [], // 商店列表
@@ -107,8 +103,14 @@
       this.params.typeId = util.getUrlParam("type");
       this.typeName = util.getUrlParam("name");
       this.queryTypes();
-      // 统一走 sortAndQuery 确保 current=1, shops=[], isReachBottom 正确初始化
       this.sortAndQuery('');
+    },
+    mounted() {
+      this._scrollHandler = this.onScroll.bind(this);
+      window.addEventListener('scroll', this._scrollHandler);
+    },
+    beforeDestroy() {
+      window.removeEventListener('scroll', this._scrollHandler);
     },
     methods: {
       queryTypes() {
@@ -121,27 +123,34 @@
             this.$message.error(err)
           })
       },
-      queryShops() {
+      queryShops(isAppend) {
+        var self = this;
+        if (isAppend) {
+          this.loadingMore = true;
+        }
         axios.get("/shop/of/type", {
             params: this.params
           })
-          .then(({data}) => {
+          .then(function(res) {
+            var data = res.data;
             if (!data || data.length === 0) {
-              this.isReachBottom = true;  // 无更多数据，停止分页
-              return
+              self.hasMore = false;
+              return;
             }
-            data.forEach(s => s.images = s.images.split(',')[0]);
-            this.shops = this.shops.concat(data);
-            this.isReachBottom = false;   // 可能有下一页
+            data.forEach(function(s) { s.images = s.images.split(',')[0]; });
+            if (isAppend) {
+              self.shops = self.shops.concat(data);
+            } else {
+              self.shops = data;
+            }
+            self.hasMore = data.length >= 5;
           })
-          .catch(err => {
+          .catch(function(err) {
             console.log(err);
-            this.$message.error(err)
-            this.isReachBottom = false;
-            this.loadingMore = false;
+            self.$message.error(err);
           })
-          .finally(() => {
-            this.loadingMore = false;
+          .finally(function() {
+            self.loadingMore = false;
           });
       },
       handleCommand(t) {
@@ -151,9 +160,9 @@
         this.params.sortBy = sortBy;
         this.params.current = 1;
         this.shops = [];
-        this.isReachBottom = false;
+        this.hasMore = true;
         this.loadingMore = false;
-        this.queryShops();
+        this.queryShops(false);
       },
       goBack() {
         history.back();
@@ -161,21 +170,19 @@
       toDetail(id) {
         location.href = "/shop-detail.html?id="+id
       },
-      loadMore() {
-        this.loadingMore = true;
-        this.params.current++;
-        this.queryShops();
-      },
-      onScroll(e) {
-        let scrollTop = e.target.scrollTop;
-        let offsetHeight = e.target.offsetHeight;
-        let scrollHeight = e.target.scrollHeight;
-        if(scrollTop + offsetHeight + 1 > scrollHeight && !this.isReachBottom){
-          this.isReachBottom = true;
-          console.log("触底");
-          this.params.current++;
-          this.queryShops();
-        }
+      onScroll() {
+        if (this._scrollTimer) return;
+        var self = this;
+        this._scrollTimer = setTimeout(function() {
+          self._scrollTimer = null;
+          var st = window.pageYOffset || document.documentElement.scrollTop;
+          var ch = document.documentElement.clientHeight;
+          var sh = document.documentElement.scrollHeight;
+          if (st + ch >= sh - 80 && self.hasMore && !self.loadingMore) {
+            self.params.current++;
+            self.queryShops(true);
+          }
+        }, 200);
       },
     }
   })

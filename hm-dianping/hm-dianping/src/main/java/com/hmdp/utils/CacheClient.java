@@ -67,8 +67,14 @@ public class CacheClient {
     public <R, ID> R queryWithLogicalExpire(String keyPrefix, ID id, Class<R> type, Function<ID, R> dbFallback, Long time, TimeUnit timeUnit) {
         String key = keyPrefix + id;
         String json = stringRedisTemplate.opsForValue().get(key);
+
+        // 缓存未命中 — 从数据库加载并写入缓存
         if (StrUtil.isBlank(json)) {
-            return null;
+            R r = dbFallback.apply(id);
+            if (r != null) {
+                this.setWithLogicalExpire(key, r, time, timeUnit);
+            }
+            return r;
         }
         // 命中，需要先把json反序列化为对象
         RedisData redisData = JSONUtil.toBean(json, RedisData.class);

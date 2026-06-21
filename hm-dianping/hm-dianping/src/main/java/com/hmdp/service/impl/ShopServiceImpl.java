@@ -58,7 +58,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 //        Shop shop = queryWithMutex(id);
 
         // 逻辑过期解决缓存击穿
-        Shop shop = cacheClient.queryWithLogicalExpire(CACHE_SHOP_KEY, id, Shop.class, this::getById, 20L, TimeUnit.MINUTES);
+        Shop shop = cacheClient.queryWithLogicalExpire(CACHE_SHOP_KEY, id, Shop.class, this::getById, 20L, TimeUnit.SECONDS);
         if (shop == null) {
             return Result.fail("店铺不存在！");
         }
@@ -255,12 +255,12 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             loadShopsToGeo(typeId, key);
         }
 
-        // 4.查询redis，根据距离排序分页
+        // 4.查询redis，根据距离排序分页（GEORADIUS 兼容 Jedis）
         GeoResults<RedisGeoCommands.GeoLocation<String>> results = stringRedisTemplate.opsForGeo()
-                .search(key,
-                        GeoReference.fromCoordinate(x, y),
-                        new Distance(5000),
-                        RedisGeoCommands.GeoSearchCommandArgs.newGeoSearchArgs().includeDistance().limit(end)
+                .radius(key,
+                        new org.springframework.data.geo.Circle(x, y, 5000),
+                        RedisGeoCommands.GeoRadiusCommandArgs.newGeoRadiusArgs()
+                                .includeDistance().sortAscending().limit(end)
                 );
         if (results == null) {
             return Result.ok(Collections.emptyList());
