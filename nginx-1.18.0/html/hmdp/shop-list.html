@@ -47,7 +47,7 @@
       评分 <i class="el-icon-arrow-down el-icon--right"></i>
     </div>
   </div>
-  <div class="shop-list" @scroll="onScroll">
+  <div class="shop-list" @scroll="onScroll" style="height:calc(100vh - 140px);overflow-y:auto">
     <div class="shop-box" v-for="s in shops" :key="s.id" @click="toDetail(s.id)">
       <div class="shop-img"><img :src="s.images" alt=""></div>
       <div class="shop-info">
@@ -71,6 +71,12 @@
         </div>
       </div>
     </div>
+    <div style="text-align:center;padding:12px;" v-if="!isReachBottom">
+      <el-button type="primary" plain size="small" @click="loadMore" :loading="loadingMore">加载更多</el-button>
+    </div>
+    <div style="text-align:center;padding:12px;color:#909399;font-size:12px;" v-else>
+      — 已加载全部 —
+    </div>
   </div>
 </div>
 <script src="./js/vue.js"></script>
@@ -85,6 +91,7 @@
     data: {
       util,
       isReachBottom: false,
+      loadingMore: false,
       types: [], // 类型列表
       shops: [], // 商店列表
       typeName: "",
@@ -131,7 +138,11 @@
             console.log(err);
             this.$message.error(err)
             this.isReachBottom = false;
+            this.loadingMore = false;
           })
+          .finally(() => {
+            this.loadingMore = false;
+          });
       },
       handleCommand(t) {
         location.href = "/shop-list.html?type="+t.id+"&name="+t.name;
@@ -140,6 +151,8 @@
         this.params.sortBy = sortBy;
         this.params.current = 1;
         this.shops = [];
+        this.isReachBottom = false;
+        this.loadingMore = false;
         this.queryShops();
       },
       goBack() {
@@ -147,6 +160,11 @@
       },
       toDetail(id) {
         location.href = "/shop-detail.html?id="+id
+      },
+      loadMore() {
+        this.loadingMore = true;
+        this.params.current++;
+        this.queryShops();
       },
       onScroll(e) {
         let scrollTop = e.target.scrollTop;
