@@ -95,8 +95,8 @@
         typeId: 0,
         current: 1,
         sortBy: "",
-        x: null, // 经度 — 用户授权位置后才赋值，null 走直接 MySQL 查询
-        y: null  // 纬度
+        x: 120.149993, // 经度（后端 Redis geo 为空时自动从 MySQL 加载）
+        y: 30.334229   // 纬度
       },
       hasLocation: false
     },
@@ -125,15 +125,18 @@
             params: this.params
           })
           .then(({data}) => {
-            if (!data) {
+            if (!data || data.length === 0) {
+              this.isReachBottom = true;  // 无更多数据，停止分页
               return
             }
             data.forEach(s => s.images = s.images.split(',')[0]);
             this.shops = this.shops.concat(data);
+            this.isReachBottom = false;   // 可能有下一页
           })
           .catch(err => {
             console.log(err);
             this.$message.error(err)
+            this.isReachBottom = false;
           })
       },
       handleCommand(t) {
@@ -141,6 +144,8 @@
       },
       sortAndQuery(sortBy) {
         this.params.sortBy = sortBy;
+        this.params.current = 1;
+        this.shops = [];
         this.queryShops();
       },
       requestLocation() {
@@ -187,12 +192,10 @@
         let offsetHeight = e.target.offsetHeight;
         let scrollHeight = e.target.scrollHeight;
         if(scrollTop + offsetHeight + 1 > scrollHeight && !this.isReachBottom){
-          this.isReachBottom = true
-          console.log("触底")
-          this.params.current++
-          this.queryShops(this.params.current, 5);
-        }else{
-          this.isReachBottom = false
+          this.isReachBottom = true;
+          console.log("触底");
+          this.params.current++;
+          this.queryShops();
         }
       },
     }
