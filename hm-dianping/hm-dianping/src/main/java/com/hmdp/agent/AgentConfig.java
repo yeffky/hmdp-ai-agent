@@ -65,4 +65,13 @@ public class AgentConfig {
                 .tools(orderQueryTool, knowledgeRetrievalTool)
                 .build();
     }
+
+    @Bean
+    public PlainCustomerServiceAgent plainAgent(OpenAiChatModel model) {
+        return AiServices.builder(PlainCustomerServiceAgent.class)
+                .chatLanguageModel(model)
+                .chatMemoryProvider(sessionId -> new MySqlChatMemory(
+                        sessionId.toString(), chatMessageMapper, 20))
+                .build();  // 无 tools —— 纯 LLM，不调 RAG
+    }
 }

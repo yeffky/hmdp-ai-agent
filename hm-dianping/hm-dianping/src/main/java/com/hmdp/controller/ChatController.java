@@ -1,7 +1,7 @@
 package com.hmdp.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.hmdp.agent.CustomerServiceAgent;
+import com.hmdp.agent.PlainCustomerServiceAgent;
 import com.hmdp.agent.guard.ReflectionGuard;
 import com.hmdp.dto.ChatRequestDTO;
 import com.hmdp.dto.Result;
@@ -21,7 +21,7 @@ public class ChatController {
     private static final Logger log = LoggerFactory.getLogger(ChatController.class);
 
     @Resource
-    private CustomerServiceAgent agent;
+    private PlainCustomerServiceAgent agent;
 
     @Resource
     private ChatMessageMapper chatMessageMapper;
