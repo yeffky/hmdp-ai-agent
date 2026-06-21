@@ -46,6 +46,9 @@
     <div class="sort-item" @click="sortAndQuery('score')">
       评分 <i class="el-icon-arrow-down el-icon--right"></i>
     </div>
+    <div class="sort-item" @click="requestLocation" :style="{color: hasLocation ? '#409eff' : '#909399'}">
+      📍 {{ hasLocation ? '已定位' : '附近商家' }}
+    </div>
   </div>
   <div class="shop-list" @scroll="onScroll">
     <div class="shop-box" v-for="s in shops" :key="s.id" @click="toDetail(s.id)">
@@ -92,9 +95,10 @@
         typeId: 0,
         current: 1,
         sortBy: "",
-        x: 120.149993, // 经度
-        y: 30.334229 // 纬度
-      }
+        x: null, // 经度 — 用户授权位置后才赋值，null 走直接 MySQL 查询
+        y: null  // 纬度
+      },
+      hasLocation: false
     },
     created() {
       // 获取参数
@@ -138,6 +142,39 @@
       sortAndQuery(sortBy) {
         this.params.sortBy = sortBy;
         this.queryShops();
+      },
+      requestLocation() {
+        var self = this;
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            function(pos) {
+              // 用户授权 → 使用真实坐标
+              self.params.x = pos.coords.longitude;
+              self.params.y = pos.coords.latitude;
+              self.hasLocation = true;
+              self.params.current = 1;
+              self.shops = [];
+              self.queryShops();
+            },
+            function() {
+              // 用户拒绝 → 使用演示坐标
+              self.params.x = 120.149993;
+              self.params.y = 30.334229;
+              self.hasLocation = true;
+              self.params.current = 1;
+              self.shops = [];
+              self.queryShops();
+            }
+          );
+        } else {
+          // 浏览器不支持 → 使用演示坐标
+          this.params.x = 120.149993;
+          this.params.y = 30.334229;
+          this.hasLocation = true;
+          this.params.current = 1;
+          this.shops = [];
+          this.queryShops();
+        }
       },
       goBack() {
         history.back();

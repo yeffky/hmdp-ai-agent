@@ -242,8 +242,8 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
                     .eq("type_id", typeId)
                     .page(new Page<>(current, SystemConstants.DEFAULT_PAGE_SIZE));
             return Result.ok(page.getRecords());
-
         }
+
         // 2.计算分页参数
         int from = (current - 1) * SystemConstants.DEFAULT_PAGE_SIZE;
         int end = current * SystemConstants.DEFAULT_PAGE_SIZE;
@@ -272,7 +272,10 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             Distance distance = result.getDistance();
             distanceMap.put(shopIdStr, distance);
         });
-        // 5.根据id查询Shop
+        // 5.根据id查询Shop（空列表直接返回，避免 SQL: id IN () 语法错误）
+        if (ids.isEmpty()) {
+            return Result.ok(Collections.emptyList());
+        }
         String idStr = StrUtil.join(",", ids);
         List<Shop> shops = query().in("id", ids).last("order by field(id," + idStr + ")").list();
         for (Shop shop: shops) {
