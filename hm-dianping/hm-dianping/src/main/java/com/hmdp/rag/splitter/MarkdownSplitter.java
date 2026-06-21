@@ -38,7 +38,10 @@ public class MarkdownSplitter {
     private static final Pattern H3_PATTERN = Pattern.compile("(?m)^### (.+)$");
     private static final Pattern H1_PATTERN = Pattern.compile("(?m)^# (.+)$");
     private static final Pattern CODE_BLOCK = Pattern.compile("```[\\s\\S]*?```");
-    private static final Pattern TABLE_ROW = Pattern.compile("^\\|.+\\|$", Pattern.MULTILINE);
+    // 完整表格块：表头行 + 分隔行(|-|) + 数据行
+    private static final Pattern TABLE_BLOCK = Pattern.compile(
+            "(^\\|.+\\|\\s*$\\n^\\|[\\s:-]+\\|\\s*$(\\n^\\|.+\\|\\s*$)*)",
+            Pattern.MULTILINE);
 
     // 句子分隔符（按优先级）
     private static final String[] SENTENCE_SEPS = { "\n\n", "\n", "。", "！", "？", "；", "，" };
@@ -64,9 +67,9 @@ public class MarkdownSplitter {
             docTitle = h1m.group(1).trim();
         }
 
-        // 2. 保护代码块：用占位符替换，切分后再还原
-        Map<String, String> codeBlocks = new LinkedHashMap<>();
-        text = protectBlocks(text, codeBlocks);
+        // 2. 保护特殊块（代码块 + 表格）：占位符替换，切分后还原
+        Map<String, String> protectedBlocks = new LinkedHashMap<>();
+        text = protectSpecialBlocks(text, protectedBlocks);
 
         // 3. 递归切分
         List<Section> sections = splitByH2(text, docTitle);
@@ -77,9 +80,9 @@ public class MarkdownSplitter {
             result.addAll(flattenSection(sec));
         }
 
-        // 5. 还原代码块
+        // 5. 还原特殊块
         for (ChunkWithHeadings c : result) {
-            c.text = restoreBlocks(c.text, codeBlocks);
+            c.text = restoreBlocks(c.text, protectedBlocks);
         }
 
         return result;
@@ -268,20 +271,36 @@ public class MarkdownSplitter {
         return chunks;
     }
 
-    // ========== 代码块保护 ==========
+    // ========== 特殊块保护（代码块 + 表格） ==========
 
-    /** 将代码块替换为占位符，切分完再还原 */
-    private String protectBlocks(String text, Map<String, String> blocks) {
-        Matcher m = CODE_BLOCK.matcher(text);
-        StringBuffer sb = new StringBuffer();
+    /**
+     * 将代码块和表格块替换为占位符，切分完成后统一还原。
+     * 代码块优先保护（避免表格正则误匹配代码块内的 | 字符）。
+     */
+    private String protectSpecialBlocks(String text, Map<String, String> blocks) {
         int idx = 0;
-        while (m.find()) {
+        // 1. 保护代码块
+        Matcher cm = CODE_BLOCK.matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (cm.find()) {
             String placeholder = "{{CODEBLOCK_" + idx + "}}";
-            blocks.put(placeholder, m.group());
-            m.appendReplacement(sb, Matcher.quoteReplacement(placeholder));
+            blocks.put(placeholder, cm.group());
+            cm.appendReplacement(sb, Matcher.quoteReplacement(placeholder));
             idx++;
         }
-        m.appendTail(sb);
+        cm.appendTail(sb);
+        text = sb.toString();
+
+        // 2. 保护表格块（表头 + 分隔行 + 数据行）
+        Matcher tm = TABLE_BLOCK.matcher(text);
+        sb = new StringBuffer();
+        while (tm.find()) {
+            String placeholder = "{{TABLEBLOCK_" + idx + "}}";
+            blocks.put(placeholder, tm.group());
+            tm.appendReplacement(sb, Matcher.quoteReplacement(placeholder));
+            idx++;
+        }
+        tm.appendTail(sb);
         return sb.toString();
     }
 
