@@ -46,9 +46,6 @@
     <div class="sort-item" @click="sortAndQuery('score')">
       评分 <i class="el-icon-arrow-down el-icon--right"></i>
     </div>
-    <div class="sort-item" @click="requestLocation" :style="{color: hasLocation ? '#409eff' : '#909399'}">
-      📍 {{ hasLocation ? '已定位' : '附近商家' }}
-    </div>
   </div>
   <div class="shop-list" @scroll="onScroll">
     <div class="shop-box" v-for="s in shops" :key="s.id" @click="toDetail(s.id)">
@@ -98,7 +95,6 @@
         x: 120.149993, // 经度（后端 Redis geo 为空时自动从 MySQL 加载）
         y: 30.334229   // 纬度
       },
-      hasLocation: false
     },
     created() {
       this.params.typeId = util.getUrlParam("type");
@@ -145,30 +141,6 @@
         this.params.current = 1;
         this.shops = [];
         this.queryShops();
-      },
-      requestLocation() {
-        var self = this;
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            function(pos) {
-              self.params.x = pos.coords.longitude;
-              self.params.y = pos.coords.latitude;
-              self.hasLocation = true;
-              self.sortAndQuery('');
-            },
-            function() {
-              self.params.x = 120.149993;
-              self.params.y = 30.334229;
-              self.hasLocation = true;
-              self.sortAndQuery('');
-            }
-          );
-        } else {
-          this.params.x = 120.149993;
-          this.params.y = 30.334229;
-          this.hasLocation = true;
-          this.sortAndQuery('');
-        }
       },
       goBack() {
         history.back();
