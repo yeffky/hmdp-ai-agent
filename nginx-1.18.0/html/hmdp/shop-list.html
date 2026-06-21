@@ -101,13 +101,11 @@
       hasLocation: false
     },
     created() {
-      // 获取参数
       this.params.typeId = util.getUrlParam("type");
       this.typeName = util.getUrlParam("name");
-      // 查询类型
       this.queryTypes();
-      // 查询商店
-      this.queryShops();
+      // 统一走 sortAndQuery 确保 current=1, shops=[], isReachBottom 正确初始化
+      this.sortAndQuery('');
     },
     methods: {
       queryTypes() {
@@ -153,32 +151,23 @@
         if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
             function(pos) {
-              // 用户授权 → 使用真实坐标
               self.params.x = pos.coords.longitude;
               self.params.y = pos.coords.latitude;
               self.hasLocation = true;
-              self.params.current = 1;
-              self.shops = [];
-              self.queryShops();
+              self.sortAndQuery('');
             },
             function() {
-              // 用户拒绝 → 使用演示坐标
               self.params.x = 120.149993;
               self.params.y = 30.334229;
               self.hasLocation = true;
-              self.params.current = 1;
-              self.shops = [];
-              self.queryShops();
+              self.sortAndQuery('');
             }
           );
         } else {
-          // 浏览器不支持 → 使用演示坐标
           this.params.x = 120.149993;
           this.params.y = 30.334229;
           this.hasLocation = true;
-          this.params.current = 1;
-          this.shops = [];
-          this.queryShops();
+          this.sortAndQuery('');
         }
       },
       goBack() {
