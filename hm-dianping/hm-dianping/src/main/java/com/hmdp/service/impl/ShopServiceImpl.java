@@ -247,16 +247,21 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         // 2.计算分页参数
         int from = (current - 1) * SystemConstants.DEFAULT_PAGE_SIZE;
         int end = current * SystemConstants.DEFAULT_PAGE_SIZE;
-
-        // 3.查询redis，根据距离排序分页，结果：shopId、distance
         String key = SHOP_GEO_KEY + typeId;
+
+        // 3.缓存穿透：Redis geo 为空时从 MySQL 加载
+        Long geoSize = stringRedisTemplate.opsForZSet().size(key);
+        if (geoSize == null || geoSize == 0) {
+            loadShopsToGeo(typeId, key);
+        }
+
+        // 4.查询redis，根据距离排序分页
         GeoResults<RedisGeoCommands.GeoLocation<String>> results = stringRedisTemplate.opsForGeo()
                 .search(key,
                         GeoReference.fromCoordinate(x, y),
                         new Distance(5000),
                         RedisGeoCommands.GeoSearchCommandArgs.newGeoSearchArgs().includeDistance().limit(end)
                 );
-        // 4.解析出id
         if (results == null) {
             return Result.ok(Collections.emptyList());
         }
@@ -283,5 +288,18 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         // 返回数据
         return Result.ok(shops);
+    }
+
+    /** 缓存穿透：Redis geo 为空时从 MySQL 加载商家坐标 */
+    private void loadShopsToGeo(Integer typeId, String geoKey) {
+        List<Shop> shops = query().eq("type_id", typeId).list();
+        if (shops.isEmpty()) return;
+        for (Shop shop : shops) {
+            if (shop.getX() != null && shop.getY() != null) {
+                stringRedisTemplate.opsForGeo().add(geoKey,
+                        new org.springframework.data.geo.Point(shop.getX(), shop.getY()),
+                        shop.getId().toString());
+            }
+        }
     }
 }
