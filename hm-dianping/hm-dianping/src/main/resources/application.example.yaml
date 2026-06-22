@@ -9,12 +9,11 @@ spring:
     username: root
     password: your-database-password
     hikari:
-      maximum-pool-size: 4            # 远程共享 MySQL，连接数受限
+      maximum-pool-size: 4
       minimum-idle: 1
-      idle-timeout: 300000          # 5分钟空闲后回收
-      max-lifetime: 600000          # 10分钟最大生命周期（需 < MySQL wait_timeout）
-      connection-timeout: 10000     # 获取连接超时 10s
-      validation-timeout: 5000      # 连接验证超时 5s
+      idle-timeout: 120000
+      max-lifetime: 180000         # 必须 < MySQL wait_timeout
+      keepalive-time: 60000        # 每分钟心跳防断连
       connection-test-query: SELECT 1
   redis:
     host: your-redis-host

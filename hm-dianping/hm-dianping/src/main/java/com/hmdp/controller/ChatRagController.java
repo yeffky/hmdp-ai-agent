@@ -5,17 +5,21 @@ import com.hmdp.agent.guard.ReflectionGuard;
 import com.hmdp.dto.ChatRequestDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.rag.retrieval.RetrievalService;
+import org.bsc.langgraph4j.CompiledGraph;
+import org.bsc.langgraph4j.state.AgentState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
- * RAG 增强聊天控制器 — 检索增强生成的最短闭环。
- *
- * /chat/rag  = 检索 → 拼上下文 → LLM 生成 → 返回
- * /chat/send = 原有 Agent 智能客服（现在支持 RAG 工具调用）
+ * 聊天控制器 — 三种模式：
+ * /chat/rag   = RAG 检索 → Agent（原有模式）
+ * /chat/react = ReAct Graph（新图引擎，多步推理）
+ * /chat/send  = 纯 LLM Agent（无工具）
  */
 @RestController
 @RequestMapping("/chat")
@@ -29,9 +33,10 @@ public class ChatRagController {
     @Resource
     private RetrievalService retrievalService;
 
-    /**
-     * RAG 增强对话 — 先检索知识库，再将检索结果作为上下文传给 LLM。
-     */
+    @Resource(name = "reactGraph")
+    private CompiledGraph reactGraph;
+
+    /** RAG + Agent 模式（原有） */
     @PostMapping("/rag")
     public Result ragChat(@RequestBody ChatRequestDTO request) {
         if (request.getSessionId() == null || request.getSessionId().trim().isEmpty()) {
@@ -41,25 +46,44 @@ public class ChatRagController {
             return Result.fail("消息不能为空");
         }
         try {
-            // 1. 检索相关知识
             String context = retrievalService.searchAsContext(request.getMessage());
-
-            // 2. 构建增强提示词
-            String augmentedMessage;
-            if (!context.isEmpty()) {
-                augmentedMessage = context + "\n\n# 用户问题\n" + request.getMessage()
-                        + "\n\n请基于上面的参考知识库内容回答用户问题。如果知识库中没有相关信息，请友好地告知用户。";
-            } else {
-                augmentedMessage = request.getMessage();
-            }
-
-            // 3. 调用 Agent（Agent 也可能调用工具，如订单查询）
-            String reply = agent.chat(request.getSessionId(), augmentedMessage);
-            reply = ReflectionGuard.apply(reply);
-            return Result.ok(reply);
+            String msg = context.isEmpty() ? request.getMessage()
+                    : context + "\n\n# 用户问题\n" + request.getMessage();
+            String reply = agent.chat(request.getSessionId(), msg);
+            return Result.ok(ReflectionGuard.apply(reply));
         } catch (Exception e) {
-            log.error("RAG chat error for session {}", request.getSessionId(), e);
-            return Result.fail("AI客服暂时不可用，请稍后再试");
+            log.error("RAG chat error", e);
+            return Result.fail("AI客服暂时不可用");
+        }
+    }
+
+    /** ReAct Graph 模式（新） */
+    @PostMapping("/react")
+    public Result reactChat(@RequestBody ChatRequestDTO request) {
+        if (request.getSessionId() == null || request.getSessionId().trim().isEmpty()) {
+            return Result.fail("会话ID不能为空");
+        }
+        if (request.getMessage() == null || request.getMessage().trim().isEmpty()) {
+            return Result.fail("消息不能为空");
+        }
+        try {
+            // 构建初始 State
+            Map<String, Object> init = new LinkedHashMap<>();
+            init.put("sessionId", request.getSessionId());
+            init.put("userQuery", request.getMessage());
+            init.put("iteration", 0);
+            init.put("toolFailures", 0);
+            init.put("scratchpad", new LinkedHashMap<>());
+            init.put("nextNode", "planner");
+
+            java.util.Optional<AgentState> result = reactGraph.invoke(init);
+            String answer = result.isPresent()
+                    ? result.get().value("finalAnswer").orElse("系统处理完成，但未生成回答。").toString()
+                    : "系统处理完成，但未生成回答。";
+            return Result.ok(answer);
+        } catch (Exception e) {
+            log.error("ReAct error for session {}", request.getSessionId(), e);
+            return Result.fail("AI客服处理失败: " + e.getMessage());
         }
     }
 }
