@@ -106,7 +106,7 @@ new Vue({
             this.ragMessages.push({ role: 'user', content: q });
             this.ragInput = ''; this.ragLoading = true;
             var self = this;
-            axios.post('/chat/rag', { sessionId: 'rag_demo', message: q }, { timeout: 60000 })
+            axios.post('/chat/react', { sessionId: 'rag_demo', message: q }, { timeout: 60000 })
                 .then(function(r) {
                     self.ragMessages.push({ role: 'assistant', content: r.data.data || r.data });
                 }).catch(function(e) {

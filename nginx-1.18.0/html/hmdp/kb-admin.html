@@ -220,7 +220,7 @@ new Vue({
         ragChat() {
             if (!this.ragQuery.trim()) return;
             this.ragLoading = true; this.ragAnswer = '';
-            axios.post('/chat/rag', {
+            axios.post('/chat/react', {
                 sessionId: 'kb_admin_' + Date.now(),
                 message: this.ragQuery
             }).then(r => {
