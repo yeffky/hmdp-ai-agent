@@ -9,11 +9,12 @@ spring:
     username: root
     password: your-database-password
     hikari:
-      maximum-pool-size: 4
+      maximum-pool-size: 4            # 远程共享 MySQL，连接数受限
       minimum-idle: 1
-      idle-timeout: 120000
-      max-lifetime: 180000         # 必须 < MySQL wait_timeout
-      keepalive-time: 60000        # 每分钟心跳防断连
+      idle-timeout: 300000            # 5分钟空闲后回收
+      max-lifetime: 600000            # 10分钟最大生命周期（需 < MySQL wait_timeout）
+      connection-timeout: 10000       # 获取连接超时 10s
+      validation-timeout: 5000        # 连接验证超时 5s
       connection-test-query: SELECT 1
   redis:
     host: your-redis-host
@@ -24,7 +25,7 @@ spring:
     jedis:
       pool:
         max-active: 10
-        max-idle: 0             # 不复用空闲连接——避免远程断连后超时
+        max-idle: 0                   # 不复用空闲连接——避免远程断连后超时
         min-idle: 0
         time-between-eviction-runs: 10s
   jackson:
@@ -38,8 +39,8 @@ logging:
 deepseek:
   api-key: your-deepseek-api-key
   # 走本地代理（自动修复 role=function -> role=tool），无需直接调用 DeepSeek
-  base-url: http://localhost:8081/api/deepseek-proxy/v1
-  real-base-url: https://api.deepseek.com/v1   # 代理最终转发的目标
+  base-url: http://localhost:${server.port}/api/deepseek-proxy
+  real-base-url: https://api.deepseek.com  # 代理最终转发的目标
   model: deepseek-chat
   temperature: 0.7
   max-tokens: 2000
@@ -71,3 +72,33 @@ rag:
   splitter:
     chunk-size: 500
     chunk-overlap: 50
+
+  # 文档自动摄入（markitdown CLI）
+  document:
+    enabled: true
+    watch-dir: ./rag-documents
+    state-file: ./rag-doc-state.json
+    debounce-seconds: 5
+    full-scan-interval-seconds: 300
+    watch-file-extensions: pdf,docx,doc,pptx,ppt,xlsx,xls,html,htm,csv,json,xml,epub,md,txt
+    markitdown-command: python -m markitdown
+    timeout-seconds: 300
+
+# ========== Agent 配置 ==========
+agent:
+  graph:
+    max-iterations: 8
+    max-retries: 3
+    llm-error-classify: true          # LLM 辅助错误分类（模糊错误语义判断）
+  # PostgreSQL（Checkpoint + 用户画像共用）
+  postgres:
+    url: jdbc:postgresql://your-postgres-host:5432/hmdp
+    username: postgres
+    password: your-postgres-password
+  memory:
+    compression:
+      enabled: true
+      compress-threshold: 4000        # 总 token 超过此值触发压缩
+      keep-recent-tokens: 2000        # 保留最近 N tokens 不压缩
+      max-summary-tokens: 500         # 压缩摘要最大 token 数
+      max-uncompressed-messages: 50   # 硬上限：最多保留消息数（兜底）

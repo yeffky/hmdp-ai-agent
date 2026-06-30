@@ -39,9 +39,12 @@ public class IngestionService {
      *
      * @return 成功摄入的切片数量
      */
+    private static final java.util.regex.Pattern MD_PATTERN = java.util.regex.Pattern.compile(
+            "^#\\s|\\n#+\\s|!\\[|\\n\\|.*\\||```\\w*\\n", java.util.regex.Pattern.MULTILINE);
+
     public int ingest(String content, String source, String title) {
         List<DocumentChunk> chunks;
-        if (content.trim().startsWith("#")) {
+        if (MD_PATTERN.matcher(content).find()) {
             chunks = ingestMarkdown(content, source, title);
         } else {
             chunks = ingestPlain(content, source, title);

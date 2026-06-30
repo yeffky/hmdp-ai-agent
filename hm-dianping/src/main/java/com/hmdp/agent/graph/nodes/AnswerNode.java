@@ -42,25 +42,11 @@ public class AnswerNode implements NodeAction<ReActAgentState> {
 
         String query = state.userQuery();
         Map<String, Object> sp = state.scratchpad();
-        String compressedSummary = state.compressedSummary();
-        List<Map<String, String>> messages = state.messages();
 
         StringBuilder prompt = new StringBuilder();
-        // 历史对话
-        if (messages != null && !messages.isEmpty()) {
-            prompt.append("## 对话历史\n");
-            for (Map<String, String> m : messages) {
-                prompt.append(m.getOrDefault("role", "?")).append(": ")
-                      .append(m.getOrDefault("content", "")).append("\n");
-            }
-            prompt.append("\n");
-        }
-        // 压缩摘要
-        if (compressedSummary != null && !compressedSummary.isEmpty()) {
-            prompt.append("## 历史摘要\n").append(compressedSummary).append("\n\n");
-        }
+        prompt.append(state.contextBlock()).append("\n");
         prompt.append("## 用户问题\n").append(query).append("\n\n");
-        prompt.append("## 收集信息\n").append(sp).append("\n\n");
+        prompt.append("## 收集信息\n").append(PlannerNode.formatToolResults(sp)).append("\n\n");
         prompt.append("请基于以上信息友好回答。不足则坦诚告知。");
 
         try {

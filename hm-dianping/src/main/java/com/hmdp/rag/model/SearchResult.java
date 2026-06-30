@@ -7,6 +7,7 @@ public class SearchResult {
 
     private DocumentChunk chunk;
     private Double score;
+    private Double rrfScore;
 
     public SearchResult() {}
 
@@ -20,6 +21,9 @@ public class SearchResult {
 
     public Double getScore() { return score; }
     public void setScore(Double score) { this.score = score; }
+
+    public Double getRrfScore() { return rrfScore; }
+    public void setRrfScore(Double rrfScore) { this.rrfScore = rrfScore; }
 
     /** 格式化为 LLM 可读的上下文片段 */
     public String toContextString() {

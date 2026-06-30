@@ -42,6 +42,7 @@ public class GeoSearchTool {
             String key = SHOP_GEO_KEY + typeId;
 
             Long geoSize = stringRedisTemplate.opsForZSet().size(key);
+            log.info("geo size: {}", geoSize);
             if (geoSize == null || geoSize == 0) {
                 loadShopsToGeo(typeId, key);
             }
@@ -51,7 +52,7 @@ public class GeoSearchTool {
                             new Circle(x, y, radius),
                             RedisGeoCommands.GeoRadiusCommandArgs.newGeoRadiusArgs()
                                     .includeDistance().sortAscending().limit(20));
-
+            log.info("results: {}", JSONUtil.toJsonStr(results));
             if (results == null) return "[]";
 
             List<Map<String, Object>> list = new ArrayList<>();

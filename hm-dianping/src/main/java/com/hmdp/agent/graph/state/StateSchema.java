@@ -69,8 +69,14 @@ public final class StateSchema {
     public static final Channel<String> NEXT_NODE           = lww("context");
     public static final Channel<String> COMPRESSED_SUMMARY  = lww("");
     public static final Channel<String> OBSERVER_FEEDBACK   = lww("");
+    public static final Channel<String> CONTEXT_BLOCK       = lww("");
     public static final Channel<Integer> ITERATION          = lww(0);
     public static final Channel<Integer> TOOL_FAILURES       = lww(0);
+    public static final Channel<Integer> RETRY_COUNT         = lww(0);
+    public static final Channel<String>  ERROR_CATEGORY      = lww("");
+    public static final Channel<String>  LAST_TOOL_NAME      = lww("");
+    public static final Channel<String>  LAST_TOOL_ARGS      = lww("");
+    public static final Channel<Integer> FATAL_ERROR_COUNT   = lww(0);
 
     // ======== Channel Map ========
 
@@ -85,8 +91,14 @@ public final class StateSchema {
         channels.put("nextNode",          NEXT_NODE);
         channels.put("compressedSummary", COMPRESSED_SUMMARY);
         channels.put("observerFeedback",  OBSERVER_FEEDBACK);
+        channels.put("contextBlock",      CONTEXT_BLOCK);
         channels.put("iteration",         ITERATION);
         channels.put("toolFailures",       TOOL_FAILURES);
+        channels.put("retryCount",         RETRY_COUNT);
+        channels.put("errorCategory",      ERROR_CATEGORY);
+        channels.put("lastToolName",       LAST_TOOL_NAME);
+        channels.put("lastToolArgs",       LAST_TOOL_ARGS);
+        channels.put("fatalErrorCount",    FATAL_ERROR_COUNT);
         return channels;
     }
 }

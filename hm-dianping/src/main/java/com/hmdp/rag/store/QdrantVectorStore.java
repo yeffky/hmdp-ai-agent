@@ -188,18 +188,27 @@ public class QdrantVectorStore {
                 List<Map<String, Object>> resultList =
                         (List<Map<String, Object>>) response.getBody().get("result");
                 if (resultList != null) {
+                    log.info("Qdrant search returned {} raw results", resultList.size());
                     for (Map<String, Object> item : resultList) {
                         String id = (String) item.get("id");
                         Double score = ((Number) item.get("score")).doubleValue();
                         @SuppressWarnings("unchecked")
                         Map<String, Object> payload = (Map<String, Object>) item.get("payload");
 
+                        String text = payload != null ? (String) payload.get("text") : null;
+                        String title = payload != null ? (String) payload.get("title") : null;
+                        String source = payload != null ? (String) payload.get("source") : null;
+                        log.info("Qdrant result: id={}, score={}, title={}, textLen={}, payloadKeys={}",
+                                id, String.format("%.4f", score), title,
+                                text != null ? text.length() : -1,
+                                payload != null ? payload.keySet() : "null");
+
                         DocumentChunk chunk = new DocumentChunk();
                         chunk.setId(id);
-                        chunk.setText((String) payload.get("text"));
-                        chunk.setSource((String) payload.get("source"));
-                        chunk.setTitle((String) payload.get("title"));
-                        chunk.setChunkIndex(payload.get("chunk_index") != null
+                        chunk.setText(text);
+                        chunk.setSource(source);
+                        chunk.setTitle(title);
+                        chunk.setChunkIndex(payload != null && payload.get("chunk_index") != null
                                 ? ((Number) payload.get("chunk_index")).intValue() : 0);
 
                         results.add(new SearchResult(chunk, score));

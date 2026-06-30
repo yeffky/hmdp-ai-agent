@@ -31,7 +31,9 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/chat/**",
                         "/kb/**",
                         "/api/deepseek-proxy/**",
-                        "/debug/**").order(1);
+                        "/debug/**",
+                        "/qdrant-admin.html",
+                        "/api/qdrant/admin/**").order(1);
         // token刷新拦截器
         registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate)).addPathPatterns("/**").order(0);
 

@@ -45,12 +45,36 @@ public class ReActAgentState extends AgentState {
         return this.<String>value("observerFeedback").orElse(null);
     }
 
+    public String contextBlock() {
+        return this.<String>value("contextBlock").orElse("");
+    }
+
     public int iteration() {
         return this.<Number>value("iteration").map(Number::intValue).orElse(0);
     }
 
     public int toolFailures() {
         return this.<Number>value("toolFailures").map(Number::intValue).orElse(0);
+    }
+
+    public int retryCount() {
+        return this.<Number>value("retryCount").map(Number::intValue).orElse(0);
+    }
+
+    public String errorCategory() {
+        return this.<String>value("errorCategory").orElse("");
+    }
+
+    public String lastToolName() {
+        return this.<String>value("lastToolName").orElse("");
+    }
+
+    public String lastToolArgs() {
+        return this.<String>value("lastToolArgs").orElse("");
+    }
+
+    public int fatalErrorCount() {
+        return this.<Number>value("fatalErrorCount").map(Number::intValue).orElse(0);
     }
 
     @SuppressWarnings("unchecked")

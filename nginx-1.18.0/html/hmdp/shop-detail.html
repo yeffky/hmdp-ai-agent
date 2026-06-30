@@ -74,7 +74,7 @@
       <div class="voucher-left">
         <div class="voucher-title">{{v.title}}</div>
         <div class="voucher-subtitle">{{v.subTitle}}</div>
-        <div class="voucher-price"><div>￥ {{util.formatPrice(v.payValue)}}</div>  <span>{{(v.payValue*10)/v.actualValue}}折</span></div>
+        <div class="voucher-price"><div>￥ {{util.formatPrice(v.payValue)}}</div>  <span>{{((v.payValue*10)/v.actualValue).toFixed(1)}}折</span></div>
       </div>
       <div class="voucher-right">
         <div v-if="v.type" class="seckill-box">
