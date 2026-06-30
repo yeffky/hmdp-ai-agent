@@ -2,9 +2,9 @@ package com.hmdp.agent.graph;
 
 import com.hmdp.agent.tool.KnowledgeRetrievalTool;
 import com.hmdp.agent.tool.OrderQueryTool;
-import com.hmdp.agent.tool.graph.DynamicQueryTool;
 import com.hmdp.agent.tool.graph.GeoSearchTool;
 import com.hmdp.agent.tool.graph.ShopDetailTool;
+import com.hmdp.agent.tool.graph.Text2SqlTool;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import org.bsc.langgraph4j.langchain4j.tool.LC4jToolMapBuilder;
 import org.bsc.langgraph4j.langchain4j.tool.LC4jToolService;
@@ -30,7 +30,7 @@ public class ToolRegistry {
     @Resource
     private OrderQueryTool orderQueryTool;
     @Resource
-    private DynamicQueryTool dynamicQueryTool;
+    private Text2SqlTool text2SqlTool;
     @Resource
     private GeoSearchTool geoSearchTool;
     @Resource
@@ -42,7 +42,7 @@ public class ToolRegistry {
                 .toolsFromObject(
                         knowledgeRetrievalTool,
                         orderQueryTool,
-                        dynamicQueryTool,
+                        text2SqlTool,
                         geoSearchTool,
                         shopDetailTool
                 );

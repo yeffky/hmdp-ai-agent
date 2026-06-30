@@ -1,24 +1,23 @@
 package com.hmdp.agent.config;
 
+import org.postgresql.ds.PGSimpleDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import javax.sql.DataSource;
 
 /**
  * PostgreSQL 数据源配置 — 供 Checkpoint Saver 和 UserStore 共用。
  *
- * 仅在 agent.postgres.enabled=true 时激活。
- * PG 不可达时启动不会失败，回退到内存存储。
+ * <p>使用 {@link PGSimpleDataSource} 直连，绕过 JDBC {@code DriverManager}
+ * 避免 classpath 上的 MySQL 驱动错误接管 PostgreSQL 连接。</p>
  */
 @Configuration
-@ConditionalOnProperty(name = "agent.postgres.enabled", havingValue = "true")
 public class PostgresConfig {
 
     private static final Logger log = LoggerFactory.getLogger(PostgresConfig.class);
@@ -34,24 +33,21 @@ public class PostgresConfig {
 
     @Bean(name = "postgresDataSource")
     public DataSource postgresDataSource() {
-        DriverManagerDataSource ds = new DriverManagerDataSource();
-        ds.setDriverClassName("org.postgresql.Driver");
-        ds.setUrl(url);
-        ds.setUsername(username);
+        PGSimpleDataSource ds = new PGSimpleDataSource();
+        ds.setURL(url);
+        ds.setUser(username);
         ds.setPassword(password);
 
-        // 验证连接（失败只 warn，不阻止启动）
         try (java.sql.Connection conn = ds.getConnection()) {
             log.info("PostgreSQL connected: {}", url);
         } catch (Exception e) {
-            log.warn("PostgreSQL unreachable at {}: {} — app will start but graph uses in-memory storage",
-                    url, e.getMessage());
+            throw new RuntimeException("PostgreSQL unreachable at " + url + ": " + e.getMessage(), e);
         }
         return ds;
     }
 
     @Bean(name = "postgresJdbcTemplate")
-    public JdbcTemplate postgresJdbcTemplate(DataSource postgresDataSource) {
+    public JdbcTemplate postgresJdbcTemplate(@Qualifier("postgresDataSource") DataSource postgresDataSource) {
         JdbcTemplate jdbc = new JdbcTemplate(postgresDataSource);
         initUserProfileTable(jdbc);
         return jdbc;

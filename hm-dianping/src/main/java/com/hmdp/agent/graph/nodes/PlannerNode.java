@@ -13,7 +13,6 @@ import java.util.*;
 
 /**
  * Planner Node — 分析意图，拆解任务。
- * 实现 NodeAction<ReActAgentState>，类型安全。
  */
 public class PlannerNode implements NodeAction<ReActAgentState> {
 
@@ -35,36 +34,35 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
         }
 
         String query = state.userQuery();
-        Map<String, Object> sp = state.scratchpad();
-        String compressedSummary = state.compressedSummary();
-        List<Map<String, String>> messages = state.messages();
+        String feedback = state.observerFeedback();
 
-        // 注入上下文到 prompt
         StringBuilder prompt = new StringBuilder();
-        prompt.append("分析此查询，判断简单/复杂。\n");
+        prompt.append(state.contextBlock());
+        prompt.append("\n");
 
-        // 历史对话（最近的消息）
-        if (messages != null && !messages.isEmpty()) {
-            prompt.append("## 对话历史\n");
-            for (Map<String, String> m : messages) {
-                prompt.append(m.getOrDefault("role", "?")).append(": ")
-                      .append(m.getOrDefault("content", "")).append("\n");
-            }
-            prompt.append("\n");
+        if (feedback != null && !feedback.isEmpty()) {
+            prompt.append("## 上轮反馈\n当前缺少: ").append(feedback).append("\n");
+            prompt.append("请检查「工具结果」中是否已有相关数据。如有则制定下一步工具调用计划；如确实无法获取则输出 ask_user。\n\n");
         }
-        // 压缩摘要（长期记忆）
-        if (compressedSummary != null && !compressedSummary.isEmpty()) {
-            prompt.append("## 历史摘要\n").append(compressedSummary).append("\n\n");
-        }
+
         prompt.append("## 当前请求\n用户: ").append(query).append("\n");
-        prompt.append("已有信息: ").append(sp).append("\n");
-        prompt.append("\n输出: {\"complex\": false} 或 {\"complex\": true, \"plan\": [...]}\n");
-        prompt.append("可用工具: searchKnowledge, queryMyOrders, dynamicQuery, geoSearch, shopDetail");
+        prompt.append("已有数据: ").append(formatToolResults(state.scratchpad())).append("\n\n");
+        prompt.append("分析用户意图并制定计划。输出JSON：\n");
+        prompt.append("简单问题：{\"intent\":\"用户意图一句话\",\"complex\":false}\n");
+        prompt.append("需要工具：{\"intent\":\"用户意图\",\"complex\":true,\"plan\":[\"第1步：用X工具做Y，因为Z\",\"第2步：...\"]}\n\n");
+        prompt.append("可用工具：\n");
+        prompt.append("- searchKnowledge: 仅查平台规则/操作流程（如何领券、怎么退款等），不查商家/商品数据\n");
+        prompt.append("- queryMyOrders: 查当前用户的优惠券订单\n");
+        prompt.append("- text2Sql: 自然语言查询数据库（商家/优惠券/用户信息等）\n");
+        prompt.append("- geoSearch: 按地理位置搜索附近商家\n");
+        prompt.append("- shopDetail: 查单个商家详细信息\n");
 
         try {
+            String promptStr = prompt.toString();
+            log.info("Planner prompt (iter {}):\n{}", iter, promptStr);
             ChatResponse resp = model.chat(List.of(
-                    SystemMessage.from("你是任务规划器。只输出JSON。"),
-                    UserMessage.from(prompt.toString())));
+                    SystemMessage.from("你是任务规划器。先分析用户意图，再拆解为具体步骤。每步要说清楚用什么工具、做什么、为什么。只输出JSON。"),
+                    UserMessage.from(promptStr)));
             String raw = resp.aiMessage().text();
             log.info("Planner (iter {}): {}", iter, raw);
 
@@ -78,5 +76,18 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
             return Map.of("iteration", iter, "nextNode", "answer",
                     "finalAnswer", "规划失败: " + e.getMessage());
         }
+    }
+
+    static String formatToolResults(Map<String, Object> sp) {
+        if (sp == null || sp.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, Object> e : sp.entrySet()) {
+            String k = e.getKey();
+            if (k.startsWith("_") || k.equals("ask_user_missing") || k.equals("error")) continue;
+            String v = e.getValue() != null ? e.getValue().toString() : "";
+            if (v.length() > 800) v = v.substring(0, 800) + "...";
+            sb.append(k).append(": ").append(v).append("\n");
+        }
+        return sb.toString();
     }
 }

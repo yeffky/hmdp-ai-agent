@@ -28,13 +28,14 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
 
     @Override
     public Map<String, Object> apply(ReActAgentState state) throws Exception {
-        int fails = state.toolFailures();
+        int fatalCount = state.fatalErrorCount();
         int iter = state.iteration();
 
-        // 熔断：工具失败 >= 2 次
-        if (fails >= 2) {
-            log.warn("Circuit breaker: fails={}", fails);
-            return Map.of("nextNode", "answer");
+        // 熔断：致命错误 >= 3 次
+        if (fatalCount >= 3) {
+            log.warn("Circuit breaker: fatalErrorCount={}", fatalCount);
+            return Map.of("nextNode", "answer",
+                    "finalAnswer", "抱歉，查询服务暂时不可用，请稍后重试。");
         }
         // 熔断：超过最大迭代次数
         if (iter >= maxIterations) {
@@ -55,9 +56,10 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
         }
 
         // 已有工具执行结果 → 评估是否足够回答
-        String prompt = "用户问题: " + state.userQuery() +
-                "\n收集信息: " + sp +
-                "\n\n信息足够回答吗？够了回 'done'，不够回 'more: <缺什么>'";
+        String prompt = state.contextBlock() + "\n" +
+                "用户问题: " + state.userQuery() + "\n" +
+                "收集信息:\n" + PlannerNode.formatToolResults(sp) +
+                "\n信息足够回答吗？够了回 'done'，不够回 'more: <缺什么>'";
 
         try {
             ChatResponse resp = model.chat(List.of(
@@ -71,14 +73,24 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
                 return Map.of("nextNode", "answer");
             }
 
-            // 信息不足 → 直接让用户提供，不回 planner 死循环
+            // 信息不足 → 优先回 planner 重新规划，让 planner 根据已有信息
+            // 决定下一步（可能调用另一个工具，也可能生成 ask_user）
             String missing = raw.startsWith("more:") ? raw.substring(5).trim() : raw;
-            String question = "请提供以下信息：" + missing;
-            sp.put("ask_user_missing", question);
-            log.info("Observer asks user: {}", question);
-            return Map.of("scratchpad", sp,
-                    "finalAnswer", question,
-                    "nextNode", "answer");
+
+            // 已规划多次仍未解决 → 直接问用户，避免死循环
+            if (iter > maxIterations / 2) {
+                String question = "请提供以下信息：" + missing;
+                sp.put("ask_user_missing", question);
+                log.info("Observer asks user (iter={}, exhausted re-plan): {}", iter, question);
+                return Map.of("scratchpad", sp,
+                        "finalAnswer", question,
+                        "nextNode", "answer");
+            }
+
+            // 回 context：用消息历史重建完整上下文，再交给 planner 制定下一步计划
+            log.info("Observer routes to context (iter={}): missing={}", iter,
+                    missing.length() > 80 ? missing.substring(0, 80) + "..." : missing);
+            return Map.of("observerFeedback", missing, "nextNode", "context");
         } catch (Exception e) {
             log.error("Observer failed", e);
             return Map.of("nextNode", "answer");

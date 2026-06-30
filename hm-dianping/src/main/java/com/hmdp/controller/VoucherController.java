@@ -24,6 +24,15 @@ public class VoucherController {
     private IVoucherService voucherService;
 
     /**
+     * 删除优惠券
+     */
+    @DeleteMapping("/{id}")
+    public Result deleteVoucher(@PathVariable("id") Long id) {
+        voucherService.removeById(id);
+        return Result.ok();
+    }
+
+    /**
      * 新增普通券
      * @param voucher 优惠券信息
      * @return 优惠券id

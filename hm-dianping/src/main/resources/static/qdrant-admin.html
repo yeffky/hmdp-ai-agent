@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qdrant 向量库管理</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft YaHei', sans-serif; background: #f0f2f5; color: #333; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { font-size: 20px; margin-bottom: 16px; color: #1a1a2e; }
+        .stats { display: flex; gap: 16px; margin-bottom: 20px; }
+        .stat-card {
+            background: #fff; border-radius: 8px; padding: 16px 24px; box-shadow: 0 1px 3px rgba(0,0,0,.1);
+            flex: 1; min-width: 0;
+        }
+        .stat-card .label { font-size: 12px; color: #999; margin-bottom: 4px; }
+        .stat-card .value { font-size: 24px; font-weight: 700; color: #1a1a2e; }
+        .toolbar { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+        .toolbar input {
+            padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; width: 300px;
+        }
+        .toolbar button {
+            padding: 8px 16px; border: none; border-radius: 6px; background: #4f46e5; color: #fff;
+            font-size: 14px; cursor: pointer;
+        }
+        .toolbar button:hover { background: #4338ca; }
+        .toolbar button:disabled { background: #a5b4fc; cursor: not-allowed; }
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        th, td { padding: 10px 14px; text-align: left; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
+        th { background: #fafafa; font-weight: 600; color: #666; white-space: nowrap; }
+        td.source { font-family: monospace; font-size: 11px; word-break: break-all; }
+        td.text { max-width: 500px; }
+        td.text .full { display: none; }
+        td.text.expanded .preview { display: none; }
+        td.text.expanded .full { display: block; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+        td.text .clickable { color: #4f46e5; cursor: pointer; }
+        .pagination { display: flex; gap: 8px; margin-top: 16px; align-items: center; }
+        .pagination span { font-size: 13px; color: #666; }
+        .loading { text-align: center; padding: 40px; color: #999; }
+        .error { color: #e53e3e; padding: 16px; background: #fff; border-radius: 8px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Qdrant 向量库管理</h1>
+    <div class="stats" id="stats"></div>
+    <div class="toolbar">
+        <button id="btnRefresh" onclick="loadInfo(); loadPoints(currentOffset);">刷新</button>
+        <span style="color:#999;font-size:13px;" id="pageInfo"></span>
+    </div>
+    <div id="content"></div>
+    <div class="pagination" id="pager"></div>
+</div>
+
+<script>
+const API = '/api/qdrant/admin';
+let currentOffset = 0;
+let nextOffset = null;
+
+async function api(url) {
+    const r = await fetch(API + url);
+    return r.json();
+}
+
+async function loadInfo() {
+    try {
+        const d = await api('/info');
+        let html = '';
+        const cfg = d.config || {};
+        html += statCard('集合名称', d.collection || '-');
+        html += statCard('向量点数', String(d.pointsCount?.count ?? '-'));
+        html += statCard('向量维度', String(cfg.config?.params?.vectors?.size ?? '-'));
+        html += statCard('距离算法', cfg.config?.params?.vectors?.distance ?? '-');
+        document.getElementById('stats').innerHTML = html;
+    } catch(e) {
+        document.getElementById('stats').innerHTML = '<div class="error">加载统计信息失败: ' + e.message + '</div>';
+    }
+}
+
+function statCard(label, value) {
+    return '<div class="stat-card"><div class="label">' + label + '</div><div class="value">' + value + '</div></div>';
+}
+
+async function loadPoints(offset) {
+    document.getElementById('content').innerHTML = '<div class="loading">加载中...</div>';
+    try {
+        const d = await api('/points?offset=' + offset + '&limit=20');
+        const points = d.points || [];
+        nextOffset = d.nextOffset;
+        currentOffset = offset;
+        renderTable(points);
+        renderPager();
+    } catch(e) {
+        document.getElementById('content').innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
+    }
+}
+
+function renderTable(points) {
+    if (points.length === 0) {
+        document.getElementById('content').innerHTML = '<div style="text-align:center;padding:40px;color:#999;">无数据</div>';
+        return;
+    }
+    let html = '<table><thead><tr>';
+    html += '<th>ID</th><th>来源 (source)</th><th>标题</th><th>文本内容</th><th>chunk</th><th>字符数</th>';
+    html += '</tr></thead><tbody>';
+    for (const p of points) {
+        const id = (p.id || '').substring(0, 12);
+        html += '<tr>';
+        html += '<td style="font-family:monospace;font-size:11px;" title="' + (p.id || '') + '">' + id + '</td>';
+        html += '<td class="source">' + esc(p.source) + '</td>';
+        html += '<td>' + esc(p.title) + '</td>';
+        html += '<td class="text" id="t_' + id + '"><span class="preview"><span class="clickable" onclick="toggleText(\'t_' + id + '\')">' + esc(p.text) + '</span></span><span class="full">' + esc(p.text) + '</span></td>';
+        html += '<td>' + (p.chunkIndex ?? '-') + '</td>';
+        html += '<td>' + (p.textLen ?? '-') + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    document.getElementById('content').innerHTML = html;
+}
+
+function toggleText(cellId) {
+    document.getElementById(cellId).classList.toggle('expanded');
+}
+
+function esc(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function renderPager() {
+    let html = '';
+    if (currentOffset > 0) {
+        const prev = Math.max(0, currentOffset - 20);
+        html += '<button onclick="loadPoints(' + prev + ')">上一页</button>';
+    }
+    html += '<span>offset: ' + currentOffset + '</span>';
+    if (nextOffset != null) {
+        html += '<button onclick="loadPoints(' + nextOffset + ')">下一页</button>';
+    }
+    document.getElementById('pager').innerHTML = html;
+    document.getElementById('pageInfo').textContent = '当前 offset: ' + currentOffset;
+}
+
+loadInfo();
+loadPoints(0);
+</script>
+</body>
+</html>

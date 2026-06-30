@@ -33,3 +33,7 @@ build/
 .vscode/
 D:\apache-maven-3.6.3/
 D:\\apache-maven-3.6.3/
+
+# RAG 文档摄入运行时文件
+rag-doc-state.json
+rag-documents/

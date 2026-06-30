@@ -42,6 +42,8 @@ public class MarkdownSplitter {
     private static final Pattern TABLE_BLOCK = Pattern.compile(
             "(^\\|.+\\|\\s*$\\n^\\|[\\s:-]+\\|\\s*$(\\n^\\|.+\\|\\s*$)*)",
             Pattern.MULTILINE);
+    // 图片语法 ![alt](url)
+    private static final Pattern IMAGE_PATTERN = Pattern.compile("!\\[[^]]*\\]\\([^)]+\\)");
 
     // 句子分隔符（按优先级）
     private static final String[] SENTENCE_SEPS = { "\n\n", "\n", "。", "！", "？", "；", "，" };
@@ -271,11 +273,11 @@ public class MarkdownSplitter {
         return chunks;
     }
 
-    // ========== 特殊块保护（代码块 + 表格） ==========
+    // ========== 特殊块保护（代码块 + 表格 + 图片） ==========
 
     /**
-     * 将代码块和表格块替换为占位符，切分完成后统一还原。
-     * 代码块优先保护（避免表格正则误匹配代码块内的 | 字符）。
+     * 将代码块、表格块、图片替换为占位符，切分完成后统一还原。
+     * 代码块优先（避免表格/图片正则误匹配代码块内的 | 和 ![ 字符）。
      */
     private String protectSpecialBlocks(String text, Map<String, String> blocks) {
         int idx = 0;
@@ -301,6 +303,18 @@ public class MarkdownSplitter {
             idx++;
         }
         tm.appendTail(sb);
+        text = sb.toString();
+
+        // 3. 保护图片 ![alt](url) — 防止 alt 文本中的标点导致图片语法被拆散
+        Matcher im = IMAGE_PATTERN.matcher(text);
+        sb = new StringBuffer();
+        while (im.find()) {
+            String placeholder = "{{IMAGE_" + idx + "}}";
+            blocks.put(placeholder, im.group());
+            im.appendReplacement(sb, Matcher.quoteReplacement(placeholder));
+            idx++;
+        }
+        im.appendTail(sb);
         return sb.toString();
     }
 

@@ -18,13 +18,17 @@ import java.util.concurrent.Executors;
 /**
  * 用户画像 Store — 跨会话持久化的用户记忆，存储于 PostgreSQL。
  *
- * 表结构：tb_user_profile
- *   user_id        BIGINT PRIMARY KEY
- *   profile_json   JSONB    用户画像字段
- *   last_updated   TIMESTAMP
- *   total_sessions INT      累计会话数
+ * <p>每个字段携带时间戳，合并时遵循"近期优先"原则：
+ * 新值的时间戳更新则覆盖，旧值的时间戳更新则保留。
  *
- * 写入方式：异步线程池，不阻塞主流程。
+ * <p>存储格式（JSONB）：
+ * <pre>
+ * {
+ *   "偏好口味": {"v": "辣", "t": 1719000000},
+ *   "常用地址": {"v": "北京市", "t": 1719000100}
+ * }
+ * </pre>
+ * 向后兼容旧格式（plain value 视为 t=0）。
  */
 @Component
 public class UserStore {
@@ -44,9 +48,36 @@ public class UserStore {
         return t;
     });
 
-    /**
-     * 获取用户画像
-     */
+    /** 字段值 + 时间戳 */
+    public static class FieldEntry {
+        public Object v;
+        public long t;
+
+        public FieldEntry() {}
+        public FieldEntry(Object v, long t) { this.v = v; this.t = t; }
+
+        static FieldEntry fromRaw(Object raw) {
+            if (raw instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> m = (Map<String, Object>) raw;
+                Object v = m.get("v");
+                Object t = m.get("t");
+                return new FieldEntry(v, t instanceof Number ? ((Number) t).longValue() : 0L);
+            }
+            // 旧格式：plain value，时间戳默认为 0
+            return new FieldEntry(raw, 0L);
+        }
+
+        Map<String, Object> toRaw() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("v", v);
+            m.put("t", t);
+            return m;
+        }
+    }
+
+    // ======== 公开 API ========
+
     public Profile getProfile(Long userId) {
         Profile profile = new Profile();
         if (jdbc == null) return profile;
@@ -59,8 +90,12 @@ public class UserStore {
                 Object jsonObj = row.get("profile_json");
                 if (jsonObj != null) {
                     String json = jsonObj.toString();
-                    Map<String, Object> fields = gson.fromJson(json, MAP_TYPE);
-                    profile.fields = fields != null ? fields : new LinkedHashMap<>();
+                    Map<String, Object> raw = gson.fromJson(json, MAP_TYPE);
+                    if (raw != null) {
+                        for (Map.Entry<String, Object> e : raw.entrySet()) {
+                            profile.fields.put(e.getKey(), FieldEntry.fromRaw(e.getValue()));
+                        }
+                    }
                 }
                 Object ts = row.get("last_updated");
                 if (ts != null) {
@@ -79,20 +114,37 @@ public class UserStore {
     }
 
     /**
-     * 异步写入/更新用户画像（从压缩摘要中提取的字段）
+     * 异步合并用户画像字段。遵循"近期优先"：仅当新字段时间戳 > 已有时间戳时才覆盖。
      */
     public void updateProfileAsync(Long userId, Map<String, Object> updates) {
         if (userId == null || updates == null || updates.isEmpty() || jdbc == null) return;
 
         executor.submit(() -> {
             try {
-                // 读取现有画像，合并新字段
+                long now = System.currentTimeMillis();
                 Profile existing = getProfile(userId);
-                existing.fields.putAll(updates);
-                existing.lastUpdated = System.currentTimeMillis();
+
+                for (Map.Entry<String, Object> e : updates.entrySet()) {
+                    String key = e.getKey();
+                    FieldEntry newEntry = FieldEntry.fromRaw(e.getValue());
+                    if (newEntry.t == 0L) newEntry.t = now; // 无时间戳则用当前时间
+
+                    FieldEntry oldEntry = existing.fields.get(key);
+                    if (oldEntry == null || newEntry.t >= oldEntry.t) {
+                        existing.fields.put(key, newEntry);
+                    }
+                    // 旧值更新 → 保留旧值（近期优先）
+                }
+
+                existing.lastUpdated = now;
                 existing.totalSessions++;
 
-                String json = gson.toJson(existing.fields);
+                // 序列化为 JSONB 兼容格式
+                Map<String, Object> toStore = new LinkedHashMap<>();
+                for (Map.Entry<String, FieldEntry> e : existing.fields.entrySet()) {
+                    toStore.put(e.getKey(), e.getValue().toRaw());
+                }
+                String json = gson.toJson(toStore);
 
                 jdbc.update(
                     "INSERT INTO tb_user_profile (user_id, profile_json, last_updated, total_sessions) " +
@@ -113,17 +165,14 @@ public class UserStore {
         });
     }
 
-    /**
-     * 将画像注入 prompt（用于 PlannerNode / AnswerNode）
-     */
     public String toPromptContext(Long userId) {
         Profile profile = getProfile(userId);
         if (profile.fields.isEmpty()) return "";
 
         StringBuilder sb = new StringBuilder();
         sb.append("## 用户画像\n");
-        for (Map.Entry<String, Object> e : profile.fields.entrySet()) {
-            sb.append("- ").append(e.getKey()).append(": ").append(e.getValue()).append("\n");
+        for (Map.Entry<String, FieldEntry> e : profile.fields.entrySet()) {
+            sb.append("- ").append(e.getKey()).append(": ").append(e.getValue().v).append("\n");
         }
         return sb.toString();
     }
@@ -131,15 +180,8 @@ public class UserStore {
     // ======== 数据类 ========
 
     public static class Profile {
-        private Map<String, Object> fields = new LinkedHashMap<>();
-        private long lastUpdated;
-        private int totalSessions;
-
-        public Map<String, Object> getFields() { return fields; }
-        public void setFields(Map<String, Object> fields) { this.fields = fields; }
-        public long getLastUpdated() { return lastUpdated; }
-        public void setLastUpdated(long lastUpdated) { this.lastUpdated = lastUpdated; }
-        public int getTotalSessions() { return totalSessions; }
-        public void setTotalSessions(int totalSessions) { this.totalSessions = totalSessions; }
+        public Map<String, FieldEntry> fields = new LinkedHashMap<>();
+        public long lastUpdated;
+        public int totalSessions;
     }
 }

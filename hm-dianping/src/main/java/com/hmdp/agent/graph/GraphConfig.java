@@ -6,6 +6,7 @@ import com.hmdp.agent.graph.state.ReActStateSerializer;
 import com.hmdp.agent.graph.state.StateSchema;
 import com.hmdp.agent.memory.context.ContextNode;
 import com.hmdp.agent.memory.context.SlidingWindowManager;
+import com.hmdp.agent.memory.context.UserStore;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.bsc.langgraph4j.langchain4j.tool.LC4jToolService;
 import org.bsc.langgraph4j.CompileConfig;
@@ -14,7 +15,6 @@ import org.bsc.langgraph4j.GraphDefinition;
 import org.bsc.langgraph4j.StateGraph;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
 import org.bsc.langgraph4j.checkpoint.BaseCheckpointSaver;
-import org.bsc.langgraph4j.checkpoint.MemorySaver;
 import org.bsc.langgraph4j.checkpoint.PostgresSaver;
 import org.bsc.langgraph4j.serializer.StateSerializer;
 import org.slf4j.Logger;
@@ -44,7 +44,13 @@ public class GraphConfig {
     @Value("${agent.graph.max-iterations:8}")
     private int maxIterations;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @Value("${agent.graph.max-retries:3}")
+    private int maxRetries;
+
+    @Value("${agent.graph.llm-error-classify:true}")
+    private boolean llmErrorClassify;
+
+    @Autowired
     @Qualifier("postgresDataSource")
     private DataSource postgresDataSource;
 
@@ -54,14 +60,17 @@ public class GraphConfig {
     private LC4jToolService toolService;
     @Autowired
     private SlidingWindowManager windowManager;
+    @Autowired
+    private UserStore userStore;
 
     @Bean("reactGraph")
     public CompiledGraph<ReActAgentState> reactGraph() throws Exception {
-        ContextNode contextNode = new ContextNode(windowManager);
+        ContextNode contextNode = new ContextNode(windowManager, userStore);
         PlannerNode planner = new PlannerNode(model, maxIterations);
-        ExecutorNode executor = new ExecutorNode(model, toolService);
+        ExecutorNode executor = new ExecutorNode(model, toolService, llmErrorClassify);
         ObserverNode observer = new ObserverNode(model, maxIterations);
         AnswerNode answerNode = new AnswerNode(model);
+        RetryGateNode retryGate = new RetryGateNode(maxRetries);
 
         StateSerializer<ReActAgentState> serializer = new ReActStateSerializer();
 
@@ -74,23 +83,32 @@ public class GraphConfig {
              .addNode("planner",  AsyncNodeAction.node_async(planner))
              .addNode("executor", AsyncNodeAction.node_async(executor))
              .addNode("observer", AsyncNodeAction.node_async(observer))
-             .addNode("answer",   AsyncNodeAction.node_async(answerNode));
+             .addNode("answer",   AsyncNodeAction.node_async(answerNode))
+             .addNode("retryGate", AsyncNodeAction.node_async(retryGate));
 
         graph.addEdge(GraphDefinition.START, "context");
         graph.addEdge("context", "planner");
         graph.addEdge("planner", "executor");
 
-        // executor 后可直达 answer（如 ask_user），也可走 observer 正常评估
+        // executor 三路条件路由：observer（正常）/ retryGate（可重试）/ answer（用户修正或致命）
         graph.addConditionalEdges("executor",
                 s -> CompletableFuture.completedFuture(
-                        s.nextNode() != null && "answer".equals(s.nextNode())
-                                ? "answer" : "observer"),
-                Map.of("observer", "observer", "answer", "answer"));
+                        s.nextNode() != null ? s.nextNode() : "observer"),
+                Map.of("observer", "observer",
+                        "retryGate", "retryGate",
+                        "answer", "answer"));
+
+        // retryGate 条件路由：executor（继续重试）/ answer（重试耗尽）
+        graph.addConditionalEdges("retryGate",
+                s -> CompletableFuture.completedFuture(
+                        s.nextNode() != null ? s.nextNode() : "answer"),
+                Map.of("executor", "executor",
+                        "answer", "answer"));
 
         graph.addConditionalEdges("observer",
                 s -> CompletableFuture.completedFuture(
                         s.nextNode() != null ? s.nextNode() : "answer"),
-                Map.of("plan", "planner", "answer", "answer", "ask_user", "answer"));
+                Map.of("context", "context", "plan", "planner", "answer", "answer", "ask_user", "answer"));
 
         graph.addEdge("answer", GraphDefinition.END);
 
@@ -105,22 +123,13 @@ public class GraphConfig {
         return graph.compile(compileConfig);
     }
 
-    private BaseCheckpointSaver createCheckpointSaver(StateSerializer<ReActAgentState> serializer) {
-        if (postgresDataSource != null) {
-            try {
-                PostgresSaver saver = PostgresSaver.builder()
-                        .datasource(postgresDataSource)
-                        .stateSerializer(serializer)
-                        .createTables(true)
-                        .build();
-                log.info("Using PostgresSaver — shared checkpoint across all instances");
-                return saver;
-            } catch (Exception e) {
-                log.error("PostgresSaver init failed — aborting startup (load-balance requires PG)", e);
-                throw new RuntimeException("PostgresSaver unavailable, cannot start in load-balance mode", e);
-            }
-        }
-        log.warn("PostgreSQL not configured — using MemorySaver (single-instance dev mode only)");
-        return new MemorySaver();
+    private BaseCheckpointSaver createCheckpointSaver(StateSerializer<ReActAgentState> serializer) throws Exception {
+        PostgresSaver saver = PostgresSaver.builder()
+                .datasource(postgresDataSource)
+                .stateSerializer(serializer)
+                .createTables(true)
+                .build();
+        log.info("Using PostgresSaver — shared checkpoint across all instances");
+        return saver;
     }
 }
