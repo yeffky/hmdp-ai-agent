@@ -29,6 +29,10 @@ public class ReActAgentState extends AgentState {
         return this.<String>value("planJson").orElse(null);
     }
 
+    public String remainPlan() {
+        return this.<String>value("remainPlan").orElse("");
+    }
+
     public String finalAnswer() {
         return this.<String>value("finalAnswer").orElse(null);
     }
@@ -45,8 +49,16 @@ public class ReActAgentState extends AgentState {
         return this.<String>value("observerFeedback").orElse(null);
     }
 
+    public String observerReport() {
+        return this.<String>value("observerReport").orElse(null);
+    }
+
     public String contextBlock() {
         return this.<String>value("contextBlock").orElse("");
+    }
+
+    public String streamingPrompt() {
+        return this.<String>value("streamingPrompt").orElse(null);
     }
 
     public int iteration() {
@@ -75,6 +87,18 @@ public class ReActAgentState extends AgentState {
 
     public int fatalErrorCount() {
         return this.<Number>value("fatalErrorCount").map(Number::intValue).orElse(0);
+    }
+
+    public Long userId() {
+        return this.<Number>value("userId").map(Number::longValue).orElse(null);
+    }
+
+    public String errorContext() {
+        return this.<String>value("errorContext").orElse("");
+    }
+
+    public int emptyResultRetries() {
+        return this.<Number>value("emptyResultRetries").map(Number::intValue).orElse(0);
     }
 
     @SuppressWarnings("unchecked")

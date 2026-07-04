@@ -252,6 +252,106 @@ public class QdrantVectorStore {
         }
     }
 
+    /** 按来源+标题删除（精确到单篇文档） */
+    public boolean deleteBySourceAndTitle(String source, String title) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            Map<String, Object> cond1 = new HashMap<>();
+            cond1.put("key", "source");
+            Map<String, Object> m1 = new HashMap<>();
+            m1.put("value", source);
+            cond1.put("match", m1);
+
+            Map<String, Object> cond2 = new HashMap<>();
+            cond2.put("key", "title");
+            Map<String, Object> m2 = new HashMap<>();
+            m2.put("value", title);
+            cond2.put("match", m2);
+
+            Map<String, Object> filter = new HashMap<>();
+            filter.put("must", List.of(cond1, cond2));
+
+            Map<String, Object> body = new HashMap<>();
+            body.put("filter", filter);
+
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            restTemplate.exchange(baseUrl + "/collections/" + collection + "/points/delete",
+                    HttpMethod.POST, request, String.class);
+            log.info("已删除 source={}, title={} 的向量", source, title);
+            return true;
+        } catch (Exception e) {
+            log.error("按 source+title 删除失败: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    // ========== 全量加载 ==========
+
+    /** 全量加载全部 points，用于 BM25 索引重建等场景。 */
+    @SuppressWarnings("unchecked")
+    public List<DocumentChunk> scrollAll() {
+        List<DocumentChunk> all = new java.util.ArrayList<>();
+        long total = countPoints();
+        if (total == 0) return all;
+        // 一次性拉取（limit >= total 可避免分页偏移问题）
+        int limit = (int) Math.min(total, 10000);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        Map<String, Object> body = new HashMap<>();
+        body.put("limit", limit);
+        body.put("with_payload", true);
+        body.put("with_vector", false);
+
+        try {
+            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, headers);
+            ResponseEntity<Map> resp = restTemplate.exchange(
+                    baseUrl + "/collections/" + collection + "/points/scroll",
+                    HttpMethod.POST, req, Map.class);
+
+            if (resp.getBody() == null) {
+                log.warn("scrollAll: Qdrant returned null body");
+                return all;
+            }
+            Map<String, Object> result = (Map<String, Object>) resp.getBody().get("result");
+            if (result == null) {
+                log.warn("scrollAll: result is null, body keys={}", resp.getBody().keySet());
+                return all;
+            }
+
+            List<Map<String, Object>> points = (List<Map<String, Object>>) result.get("points");
+            if (points == null) {
+                log.warn("scrollAll: points is null, result keys={}", result.keySet());
+                return all;
+            }
+
+            for (Map<String, Object> pt : points) {
+                DocumentChunk chunk = new DocumentChunk();
+                chunk.setId(Objects.toString(pt.get("id"), null));
+                Map<String, Object> payload = (Map<String, Object>) pt.get("payload");
+                if (payload != null) {
+                    chunk.setText(Objects.toString(payload.get("text"), null));
+                    chunk.setSource(Objects.toString(payload.get("source"), null));
+                    chunk.setTitle(Objects.toString(payload.get("title"), null));
+                    Object ci = payload.get("chunk_index");
+                    if (ci instanceof Number) chunk.setChunkIndex(((Number) ci).intValue());
+                    // 还原 metadata（含 headingPath、content_hash）
+                    Object metaObj = payload.get("metadata");
+                    if (metaObj instanceof Map) {
+                        chunk.setMetadata((Map<String, Object>) metaObj);
+                    }
+                }
+                all.add(chunk);
+            }
+        } catch (Exception e) {
+            log.error("scrollAll 失败: {}", e.getMessage(), e);
+        }
+        log.info("从 Qdrant 加载了 {}/{} 个 points", all.size(), total);
+        return all;
+    }
+
     // ========== 工具方法 ==========
 
     private List<Float> floatsToList(float[] arr) {

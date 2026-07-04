@@ -59,6 +59,8 @@ public class OrderQueryTool {
     }
 
     private Long getUserId() {
+        Long ctxUserId = com.hmdp.agent.ToolContext.getUserId();
+        if (ctxUserId != null && ctxUserId > 0) return ctxUserId;
         try {
             return UserHolder.getUser() != null ? UserHolder.getUser().getId() : null;
         } catch (Exception e) {

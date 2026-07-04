@@ -3,28 +3,27 @@ package com.hmdp.controller;
 import com.hmdp.agent.CustomerServiceAgent;
 import com.hmdp.agent.graph.state.ReActAgentState;
 import com.hmdp.agent.guard.ReflectionGuard;
+import com.hmdp.dto.ChatHistoryRound;
 import com.hmdp.dto.ChatRequestDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.rag.retrieval.RetrievalService;
-import com.hmdp.utils.UserHolder;
+import com.hmdp.repository.ChatHistoryRepository;
+import com.hmdp.utils.RedisConstants;
+import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.RunnableConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
 import java.util.*;
 
-/**
- * 聊天控制器 — 三种模式：
- * /chat/rag   = RAG 检索 → Agent（原有模式）
- * /chat/react = ReAct Graph（图引擎 + Checkpoint + 滑动窗口 + 用户画像）
- * /chat/send  = 纯 LLM Agent（无工具）
- *
- * threadId 策略：使用 userId，保证同一用户的跨会话记忆连续性。
- * 匿名用户 fallback 到前端 sessionId。
- */
 @RestController
 @RequestMapping("/chat")
 public class ChatRagController {
@@ -40,7 +39,16 @@ public class ChatRagController {
     @Resource(name = "reactGraph")
     private CompiledGraph<ReActAgentState> reactGraph;
 
-    /** RAG + Agent 模式（原有 — 不变） */
+    @Resource
+    private OpenAiChatModel chatModel;
+
+    @Resource
+    private ChatHistoryRepository chatHistoryRepo;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    /** RAG + Agent 模式 */
     @PostMapping("/rag")
     public Result ragChat(@RequestBody ChatRequestDTO request) {
         if (request.getSessionId() == null || request.getSessionId().trim().isEmpty()) {
@@ -61,26 +69,22 @@ public class ChatRagController {
         }
     }
 
-    /** ReAct Graph 模式 — threadId = userId，跨会话记忆 + 用户画像 */
+    /** ReAct Graph 模式 — 强制登录，从 Redis 获取 userId */
     @PostMapping("/react")
-    public Result reactChat(@RequestBody ChatRequestDTO request) {
+    public Result reactChat(@RequestBody ChatRequestDTO request,
+                            HttpServletRequest httpRequest) {
         if (request.getMessage() == null || request.getMessage().trim().isEmpty()) {
             return Result.fail("消息不能为空");
         }
-        try {
-            // 确定 threadId：优先使用登录用户 ID，匿名用户 fallback 到 sessionId
-            Long userId = getCurrentUserId();
-            String threadId;
-            if (userId != null && userId > 0) {
-                threadId = "user:" + userId;
-            } else {
-                // 匿名用户
-                threadId = request.getSessionId() != null && !request.getSessionId().trim().isEmpty()
-                        ? "anon:" + request.getSessionId()
-                        : "anon:" + UUID.randomUUID().toString().substring(0, 8);
-            }
 
-            // 构建初始状态
+        Long userId = resolveUserIdFromRedis(httpRequest);
+        if (userId == null || userId <= 0) {
+            return Result.fail("请先登录");
+        }
+
+        try {
+            String threadId = "user:" + userId;
+
             Map<String, Object> init = new LinkedHashMap<>();
             init.put("sessionId", threadId);
             init.put("userQuery", request.getMessage());
@@ -90,21 +94,37 @@ public class ChatRagController {
             init.put("messages", new ArrayList<>());
             init.put("compressedSummary", "");
             init.put("nextNode", "context");
-            if (userId != null) {
-                init.put("userId", userId);
-            }
+            init.put("streamingPrompt", "");
+            init.put("observerReport", "");
+            init.put("userId", userId);
 
-            // RunnableConfig: threadId = userId（用户级线程）
             RunnableConfig config = RunnableConfig.builder()
                     .threadId(threadId)
                     .build();
 
             Optional<ReActAgentState> result = reactGraph.invoke(init, config);
-            String answer = result.isPresent()
-                    ? result.get().finalAnswer() != null
-                        ? result.get().finalAnswer()
-                        : "系统处理完成，但未生成回答。"
-                    : "系统处理完成，但未生成回答。";
+            String answer;
+            if (result.isPresent()) {
+                ReActAgentState state = result.get();
+                if ("__STREAMING__".equals(state.finalAnswer())) {
+                    answer = generateSyncAnswer(state);
+                } else {
+                    answer = state.finalAnswer() != null
+                            ? state.finalAnswer()
+                            : "系统处理完成，但未生成回答。";
+                }
+            } else {
+                answer = "系统处理完成，但未生成回答。";
+            }
+
+            try {
+                if (request.getMessage() != null && !request.getMessage().isEmpty()
+                        && answer != null && !answer.isEmpty()) {
+                    chatHistoryRepo.saveRound(userId, request.getMessage(), answer);
+                }
+            } catch (Exception e) {
+                log.error("Failed to persist chat round for user {}: {}", userId, e.getMessage());
+            }
 
             log.info("ReAct complete: threadId={}, messages={}",
                     threadId,
@@ -112,18 +132,81 @@ public class ChatRagController {
 
             return Result.ok(answer);
         } catch (Exception e) {
-            log.error("ReAct error for session {}", request.getSessionId(), e);
+            log.error("ReAct error for user {}", userId, e);
             return Result.fail("AI客服处理失败: " + e.getMessage());
         }
     }
 
-    /** 获取当前登录用户 ID */
-    private Long getCurrentUserId() {
+    /**
+     * 聊天历史 — 分页查询，从 PostgreSQL tb_chat_history 加载。
+     */
+    @GetMapping("/history")
+    public Result history(
+            @RequestParam(value = "beforeId", required = false) Long beforeId,
+            @RequestParam(value = "limit", defaultValue = "10") Integer limit,
+            HttpServletRequest httpRequest) {
+
+        Long userId = resolveUserIdFromRedis(httpRequest);
+        if (userId == null || userId <= 0) {
+            return Result.fail("请先登录");
+        }
+
+        if (limit < 1 || limit > 20) {
+            limit = 10;
+        }
+
+        List<ChatHistoryRound> rounds = chatHistoryRepo.findRounds(userId, beforeId, limit);
+
+        boolean hasMore = false;
+        if (!rounds.isEmpty()) {
+            ChatHistoryRound oldest = rounds.get(rounds.size() - 1);
+            Long minId = chatHistoryRepo.getMinId(userId);
+            hasMore = minId != null && oldest.getId() > minId;
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("rounds", rounds);
+        result.put("hasMore", hasMore);
+
+        return Result.ok(result);
+    }
+
+    /** 非流式端点用同步模型生成最终回答（AnswerNode 设置了 __STREAMING__ 标记时） */
+    private String generateSyncAnswer(ReActAgentState state) {
+        String prompt = state.streamingPrompt();
+        if (prompt == null || prompt.isEmpty()) {
+            return "系统处理完成，但未生成回答。";
+        }
         try {
-            if (UserHolder.getUser() != null) {
-                return UserHolder.getUser().getId();
+            ChatResponse resp = chatModel.chat(List.of(
+                    SystemMessage.from("你是黑马点评AI客服小黑。友好、专业、简洁。"),
+                    UserMessage.from(prompt)));
+            return resp.aiMessage().text();
+        } catch (Exception e) {
+            log.error("Sync answer generation failed", e);
+            return "抱歉，回答生成失败，请稍后重试。";
+        }
+    }
+
+    /** 从 Redis 直接获取当前用户 ID（分布式友好，不依赖 ThreadLocal） */
+    private Long resolveUserIdFromRedis(HttpServletRequest request) {
+        try {
+            String token = request.getHeader("authorization");
+            if (token == null || token.isBlank()) {
+                return null;
             }
-        } catch (Exception ignored) {}
+            Map<Object, Object> userMap = stringRedisTemplate.opsForHash()
+                    .entries(RedisConstants.LOGIN_USER_KEY + token);
+            if (userMap.isEmpty()) {
+                return null;
+            }
+            Object idObj = userMap.get("id");
+            if (idObj != null) {
+                return Long.valueOf(idObj.toString());
+            }
+        } catch (Exception e) {
+            log.warn("Failed to resolve userId from Redis: {}", e.getMessage());
+        }
         return null;
     }
 }

@@ -115,3 +115,27 @@
     background: #ff6633;
     border-color: #ff6633;
 }
+
+.chat-loading-top {
+    text-align: center;
+    padding: 8px 0;
+    color: #909399;
+    font-size: 12px;
+}
+
+.chat-no-more {
+    text-align: center;
+    padding: 8px 0;
+    color: #c0c4cc;
+    font-size: 12px;
+}
+
+.cursor-blink {
+    animation: blink 1s step-end infinite;
+    color: #ff6633;
+    font-weight: bold;
+}
+
+@keyframes blink {
+    50% { opacity: 0; }
+}

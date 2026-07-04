@@ -6,10 +6,12 @@ import com.hmdp.rag.document.IngestionStateManager;
 import com.hmdp.rag.embedding.EmbeddingService;
 import com.hmdp.rag.embedding.OpenAiEmbeddingService;
 import com.hmdp.rag.ingestion.IngestionService;
+import com.hmdp.rag.rerank.LLMReranker;
+import com.hmdp.rag.rerank.Reranker;
+import com.hmdp.rag.retrieval.BM25KeywordIndex;
 import com.hmdp.rag.retrieval.LLMQueryRewriter;
 import com.hmdp.rag.retrieval.RetrievalService;
-import com.hmdp.rag.splitter.DocumentSplitter;
-import com.hmdp.rag.splitter.MarkdownSplitter;
+import com.hmdp.rag.splitter.AdaptiveSplitter;
 import com.hmdp.rag.store.QdrantVectorStore;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.springframework.beans.factory.annotation.Value;
@@ -92,21 +94,21 @@ public class RagConfig {
     }
 
     @Bean
-    public DocumentSplitter documentSplitter() {
-        return new DocumentSplitter(splitterChunkSize, splitterChunkOverlap);
+    public AdaptiveSplitter adaptiveSplitter() {
+        return new AdaptiveSplitter(splitterChunkSize, splitterChunkOverlap);
     }
 
     @Bean
-    public MarkdownSplitter markdownSplitter() {
-        return new MarkdownSplitter(splitterChunkSize, splitterChunkOverlap);
+    public BM25KeywordIndex bm25KeywordIndex() {
+        return new BM25KeywordIndex();
     }
 
     @Bean
-    public IngestionService ingestionService(DocumentSplitter simpleSplitter,
-                                              MarkdownSplitter markdownSplitter,
+    public IngestionService ingestionService(AdaptiveSplitter adaptiveSplitter,
                                               EmbeddingService embedding,
-                                              QdrantVectorStore store) {
-        return new IngestionService(simpleSplitter, markdownSplitter, embedding, store);
+                                              QdrantVectorStore store,
+                                              BM25KeywordIndex bm25Index) {
+        return new IngestionService(adaptiveSplitter, embedding, store, bm25Index);
     }
 
     @Bean
@@ -115,10 +117,17 @@ public class RagConfig {
     }
 
     @Bean
+    public Reranker llmReranker(@Lazy OpenAiChatModel model) {
+        return new LLMReranker(model);
+    }
+
+    @Bean
     public RetrievalService retrievalService(EmbeddingService embedding,
                                               QdrantVectorStore store,
-                                              LLMQueryRewriter rewriter) {
-        return new RetrievalService(embedding, store, rewriter,
+                                              LLMQueryRewriter rewriter,
+                                              BM25KeywordIndex bm25Index,
+                                              Reranker reranker) {
+        return new RetrievalService(embedding, store, rewriter, bm25Index, reranker,
                 retrievalTopK, retrievalScoreThreshold);
     }
 

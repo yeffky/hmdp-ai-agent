@@ -24,7 +24,7 @@ axios.interceptors.response.use(function (response) {
 }, function (error) {
   // 一般是服务端异常或者网络异常
   console.log(error)
-  if(error.response.status == 401){
+  if(error.response && error.response.status == 401){
     // 未登录，跳转
     setTimeout(() => {
       location.href = "/login.html"

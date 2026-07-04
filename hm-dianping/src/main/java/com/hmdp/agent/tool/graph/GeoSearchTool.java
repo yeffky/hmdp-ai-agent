@@ -32,12 +32,12 @@ public class GeoSearchTool {
     @Resource
     private ShopMapper shopMapper;
 
-    @Tool("按地理位置搜索指定类型的商家，返回距离范围内的商家列表（含名称、评分、均价、距离等）")
-    public String search(
-            @P("商家类型ID（整数），如: 1=美食, 2=KTV, 3=酒店。不确定时先用 searchKnowledge 查询") int typeId,
+    @Tool("按地理位置搜索指定类型的商家，涉及到距离、附近、范围内这种词的时候进行此查询，返回距离范围内的商家列表（含名称、评分、均价、距离等）")
+    public String geoSearch(
+            @P("商家类型ID（整数），如: 1=美食, 2=KTV, 3=酒店。不确定时先用 query 查询") int typeId,
             @P("用户当前经度") double x,
             @P("用户当前纬度") double y,
-            @P("搜索半径（米），默认5000") int radius) {
+            @P("搜索半径（米）") int radius) {
         try {
             String key = SHOP_GEO_KEY + typeId;
 

@@ -28,7 +28,7 @@ public class TableSchemaService {
     private static final Logger log = LoggerFactory.getLogger(TableSchemaService.class);
 
     private static final String REDIS_KEY_TABLE_NAMES = "hmdp:table_names";
-    private static final long TABLE_NAMES_TTL_HOURS = 24;
+    private static final long TABLE_NAMES_TTL_HOURS = 4;
 
     private final OpenAiChatModel model;
     private final StringRedisTemplate redis;
@@ -47,6 +47,12 @@ public class TableSchemaService {
         return getTableList().stream().map(t -> t.name).collect(Collectors.toSet());
     }
 
+    /** 主动清除表名缓存（下次查询时从 MySQL 重建） */
+    public void evictTableNameCache() {
+        redis.delete(REDIS_KEY_TABLE_NAMES);
+        log.info("Table name cache evicted from Redis");
+    }
+
     /**
      * 根据用户查询选择相关表并返回其完整列结构。
      *
@@ -56,7 +62,9 @@ public class TableSchemaService {
     public Map<String, List<ColDef>> selectAndFetchSchema(String userQuery) {
         // 1. 获取表名列表（Redis 缓存 → DB 兜底）
         List<TableSummary> allTables = getTableList();
-
+        for (TableSummary table : allTables) {
+            log.info("table intro:{}", table.toString());
+        }
         // 2. LLM 选择相关表
         List<String> selected = selectRelevantTables(userQuery, allTables);
         log.info("TableSelector: query='{}' → tables={}", userQuery, selected);
@@ -89,6 +97,7 @@ public class TableSchemaService {
                     .collect(Collectors.joining("\n"));
             redis.opsForValue().set(REDIS_KEY_TABLE_NAMES, value, TABLE_NAMES_TTL_HOURS, TimeUnit.HOURS);
         }
+
         return tables;
     }
 
@@ -210,6 +219,14 @@ public class TableSchemaService {
         TableSummary(String name, String comment) {
             this.name = name;
             this.comment = comment == null ? "" : comment;
+        }
+
+        @Override
+        public String toString() {
+            return "TableSummary{" +
+                    "name='" + name + '\'' +
+                    ", comment='" + comment + '\'' +
+                    '}';
         }
     }
 

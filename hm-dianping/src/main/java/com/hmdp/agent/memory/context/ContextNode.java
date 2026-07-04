@@ -1,6 +1,8 @@
 package com.hmdp.agent.memory.context;
 
 import com.hmdp.agent.graph.state.ReActAgentState;
+import com.hmdp.dto.ChatHistoryRound;
+import com.hmdp.repository.ChatHistoryRepository;
 import org.bsc.langgraph4j.action.NodeAction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +17,7 @@ import java.util.*;
  *   <li>System Prompt（核心规则）</li>
  *   <li>用户画像（跨会话持久化记忆，含时间戳冲突解决）</li>
  *   <li>记忆摘要（压缩后的历史摘要）</li>
- *   <li>对话历史（最近消息）</li>
+ *   <li>对话历史（从 PostgreSQL tb_chat_history 加载最近 N 轮）</li>
  * </ol>
  * <p>工具调用结果不在此块中，由各节点从 state.scratchpad() 动态读取。</p>
  */
@@ -25,6 +27,9 @@ public class ContextNode implements NodeAction<ReActAgentState> {
 
     private final SlidingWindowManager windowManager;
     private final UserStore userStore;
+    private final ChatHistoryRepository chatHistoryRepo;
+
+    private static final int MAX_CONTEXT_ROUNDS = 10;
 
     private static final String SYSTEM_RULES = """
             ## 核心规则
@@ -32,11 +37,15 @@ public class ContextNode implements NodeAction<ReActAgentState> {
             - 如果发现不可调和的事实矛盾，请直接询问用户，而不是自作主张地修改历史数据。
             - 当用户提供的信息前后冲突时，优先采纳用户近期的表述。
             - 你不会的就坦诚告知，不要编造。
+            - 历史对话仅作上下文参考。用户当前问题如果不再要求「附近」「周边」，就不要因为历史缺经纬度而继续索要地理位置。
+            - 用户改变主意时，无条件跟随新意图，不要被历史需求绑架。
             """;
 
-    public ContextNode(SlidingWindowManager windowManager, UserStore userStore) {
+    public ContextNode(SlidingWindowManager windowManager, UserStore userStore,
+                       ChatHistoryRepository chatHistoryRepo) {
         this.windowManager = windowManager;
         this.userStore = userStore;
+        this.chatHistoryRepo = chatHistoryRepo;
     }
 
     @Override
@@ -78,18 +87,23 @@ public class ContextNode implements NodeAction<ReActAgentState> {
             sb.append("\n## 历史记忆\n").append(summary).append("\n");
         }
 
-        // --- 对话历史（最近消息，从 state.messages 格式化） ---
-        List<Map<String, String>> messages = state.messages();
-        if (messages != null && !messages.isEmpty()) {
-            sb.append("\n## 对话历史\n");
-            // 只取最后 20 条，避免过长
-            int start = Math.max(0, messages.size() - 20);
-            for (int i = start; i < messages.size(); i++) {
-                Map<String, String> m = messages.get(i);
-                String role = m.getOrDefault("role", "?");
-                String content = m.getOrDefault("content", "");
-                if (content.length() > 300) content = content.substring(0, 300) + "...";
-                sb.append(role).append(": ").append(content).append("\n");
+        // --- 对话历史（从 PostgreSQL tb_chat_history 加载最近 N 轮） ---
+        if (userId != null && chatHistoryRepo != null) {
+            List<ChatHistoryRound> rounds = chatHistoryRepo.findRounds(userId, null, MAX_CONTEXT_ROUNDS);
+            if (!rounds.isEmpty()) {
+                sb.append("\n## 对话历史\n");
+                // findRounds returns DESC (newest first), reverse to chronological
+                for (int i = rounds.size() - 1; i >= 0; i--) {
+                    ChatHistoryRound r = rounds.get(i);
+                    String userMsg = r.getUserMessage();
+                    String aiMsg = r.getAssistantMessage();
+                    if (userMsg != null && userMsg.length() > 300)
+                        userMsg = userMsg.substring(0, 300) + "...";
+                    if (aiMsg != null && aiMsg.length() > 300)
+                        aiMsg = aiMsg.substring(0, 300) + "...";
+                    sb.append("user: ").append(userMsg).append("\n");
+                    sb.append("assistant: ").append(aiMsg).append("\n");
+                }
             }
         }
 

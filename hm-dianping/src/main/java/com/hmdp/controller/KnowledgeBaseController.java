@@ -2,11 +2,12 @@ package com.hmdp.controller;
 
 import com.hmdp.dto.Result;
 import com.hmdp.rag.ingestion.IngestionService;
+import com.hmdp.rag.model.DocumentChunk;
 import com.hmdp.rag.model.IngestionRequest;
 import com.hmdp.rag.model.KnowledgeBaseStats;
 import com.hmdp.rag.model.SearchResult;
 import com.hmdp.rag.retrieval.RetrievalService;
-import com.hmdp.rag.splitter.MarkdownSplitter;
+import com.hmdp.rag.splitter.AdaptiveSplitter;
 import com.hmdp.rag.store.QdrantVectorStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,7 +36,7 @@ public class KnowledgeBaseController {
     private RetrievalService retrievalService;
 
     @Resource
-    private MarkdownSplitter markdownSplitter;
+    private AdaptiveSplitter adaptiveSplitter;
 
     /** 摄取一篇文档到知识库 */
     @PostMapping("/ingest")
@@ -51,6 +52,9 @@ public class KnowledgeBaseController {
                     request.getContent(),
                     request.getSource(),
                     request.getTitle() != null ? request.getTitle() : "未命名文档");
+            if (count == 0) {
+                return Result.ok("文档内容重复或切片为空，已跳过摄入");
+            }
             return Result.ok("成功摄入 " + count + " 个切片");
         } catch (Exception e) {
             log.error("知识库摄入失败", e);
@@ -81,6 +85,76 @@ public class KnowledgeBaseController {
             return Result.ok("已删除 source=" + source + " 的数据");
         } catch (Exception e) {
             log.error("删除失败", e);
+            return Result.fail("删除失败: " + e.getMessage());
+        }
+    }
+
+    /** 列出知识库中所有文档（按 source+title 聚合） */
+    @GetMapping("/documents")
+    public Result listDocuments() {
+        try {
+            List<DocumentChunk> all = qdrantVectorStore.scrollAll();
+            Map<String, Map<String, Object>> groups = new LinkedHashMap<>();
+            for (DocumentChunk c : all) {
+                String key = (c.getSource() != null ? c.getSource() : "") + "|" +
+                             (c.getTitle() != null ? c.getTitle() : "");
+                if (!groups.containsKey(key)) {
+                    Map<String, Object> doc = new LinkedHashMap<>();
+                    doc.put("source", c.getSource());
+                    doc.put("title", c.getTitle());
+                    doc.put("chunkCount", 0);
+                    doc.put("preview", c.getText() != null && c.getText().length() > 200
+                            ? c.getText().substring(0, 200) + "..." : c.getText());
+                    Map<String, Object> meta = c.getMetadata();
+                    doc.put("contentHash", meta != null && meta.containsKey("content_hash")
+                            ? meta.get("content_hash").toString().substring(0, 12) : "");
+                    groups.put(key, doc);
+                }
+                Map<String, Object> doc = groups.get(key);
+                doc.put("chunkCount", ((Integer) doc.get("chunkCount")) + 1);
+            }
+            return Result.ok(new ArrayList<>(groups.values()));
+        } catch (Exception e) {
+            log.error("列出文档失败", e);
+            return Result.fail("获取文档列表失败: " + e.getMessage());
+        }
+    }
+
+    /** 获取单篇文档的所有切片详情 */
+    @GetMapping("/documents/chunks")
+    public Result listChunks(@RequestParam String source, @RequestParam String title) {
+        try {
+            List<DocumentChunk> all = qdrantVectorStore.scrollAll();
+            List<Map<String, Object>> chunks = new ArrayList<>();
+            for (DocumentChunk c : all) {
+                if (!Objects.equals(c.getSource(), source) || !Objects.equals(c.getTitle(), title)) {
+                    continue;
+                }
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", c.getId());
+                m.put("text", c.getText());
+                m.put("chunkIndex", c.getChunkIndex());
+                Map<String, Object> meta = c.getMetadata();
+                m.put("headingPath", meta != null ? meta.getOrDefault("headingPath", "") : "");
+                m.put("length", c.getText() != null ? c.getText().length() : 0);
+                chunks.add(m);
+            }
+            chunks.sort(Comparator.comparingInt(c -> ((Integer) c.get("chunkIndex"))));
+            return Result.ok(chunks);
+        } catch (Exception e) {
+            log.error("获取切片列表失败", e);
+            return Result.fail("获取切片失败: " + e.getMessage());
+        }
+    }
+
+    /** 删除单篇文档 */
+    @DeleteMapping("/document")
+    public Result deleteDocument(@RequestParam String source, @RequestParam String title) {
+        try {
+            boolean ok = ingestionService.deleteBySourceAndTitle(source, title);
+            return ok ? Result.ok("已删除 " + title) : Result.fail("删除失败");
+        } catch (Exception e) {
+            log.error("删除文档失败", e);
             return Result.fail("删除失败: " + e.getMessage());
         }
     }
@@ -118,36 +192,22 @@ public class KnowledgeBaseController {
         }
     }
 
-    /** 切片预览 — 展示 Markdown/文本 切分后的结构 */
+    /** 切片预览 — 展示自适应切片后的结构和 headingPath */
     @PostMapping("/preview-split")
     public Result previewSplit(@RequestBody IngestionRequest request) {
         if (request.getContent() == null || request.getContent().trim().isEmpty()) {
             return Result.fail("文档内容不能为空");
         }
         try {
+            List<AdaptiveSplitter.ChunkResult> results = adaptiveSplitter.split(request.getContent());
             List<Map<String, Object>> chunks = new ArrayList<>();
-            if (request.getContent().trim().startsWith("#")) {
-                // Markdown 结构感知切片
-                List<MarkdownSplitter.ChunkWithHeadings> result = markdownSplitter.split(request.getContent());
-                for (MarkdownSplitter.ChunkWithHeadings c : result) {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("index", c.getIndex());
-                    m.put("headingPath", c.getHeadingPath());
-                    m.put("text", c.getText());
-                    m.put("length", c.getText().length());
-                    chunks.add(m);
-                }
-            } else {
-                // 通用文本切片（仅显示文本）
-                List<String> texts = markdownSplitter.splitPlain(request.getContent());
-                for (int i = 0; i < texts.size(); i++) {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("index", i);
-                    m.put("headingPath", "");
-                    m.put("text", texts.get(i));
-                    m.put("length", texts.get(i).length());
-                    chunks.add(m);
-                }
+            for (AdaptiveSplitter.ChunkResult r : results) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("index", r.getIndex());
+                m.put("headingPath", r.getHeadingPath());
+                m.put("text", r.getText());
+                m.put("length", r.getText().length());
+                chunks.add(m);
             }
             Map<String, Object> summary = new LinkedHashMap<>();
             summary.put("totalChunks", chunks.size());

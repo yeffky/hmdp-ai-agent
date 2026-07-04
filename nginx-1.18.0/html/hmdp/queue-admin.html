@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>排队管理 - 黑马点评</title>
+  <link rel="stylesheet" href="./css/element.css">
+  <style>
+    body { margin: 0; background: #f5f7fa; font-family: 'Helvetica Neue', Arial, sans-serif; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #fff; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px;
+              box-shadow: 0 1px 4px rgba(0,0,0,0.06); display: flex; justify-content: space-between; align-items: center; }
+    .header h1 { margin: 0; font-size: 18px; color: #303133; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    .card h2 { margin: 0 0 16px; font-size: 15px; color: #303133; border-bottom: 2px solid #ff6633; padding-bottom: 8px; display: inline-block; }
+    .current-num { text-align: center; padding: 20px 0; }
+    .current-num .big-num { font-size: 64px; font-weight: bold; color: #ff6633; line-height: 1; }
+    .current-num .label { font-size: 14px; color: #909399; margin-top: 8px; }
+    .stats-row { display: flex; justify-content: space-around; text-align: center; padding: 12px 0; border-top: 1px solid #f0f0f0; margin-top: 12px; }
+    .stat-val { font-size: 28px; font-weight: bold; color: #303133; }
+    .stat-lbl { font-size: 12px; color: #909399; }
+    .waiting-list { margin-top: 12px; }
+    .waiting-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
+                    background: #fafafa; border-radius: 6px; margin-bottom: 6px; border-left: 3px solid #ff6633; }
+    .waiting-num { font-size: 20px; font-weight: bold; color: #ff6633; }
+    .waiting-info { font-size: 12px; color: #909399; }
+    .empty-state { text-align: center; padding: 40px 0; color: #c0c4cc; }
+    .empty-state .el-icon { font-size: 48px; }
+    .shop-select { display: flex; gap: 10px; align-items: center; }
+    .shop-select .el-select { flex: 1; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div class="container">
+    <div class="header">
+      <h1>📢 排队叫号管理</h1>
+      <el-button size="small" @click="refresh" :loading="refreshing" icon="el-icon-refresh">刷新</el-button>
+    </div>
+
+    <!-- 选择商铺 -->
+    <div class="card">
+      <h2>选择商铺</h2>
+      <div class="shop-select">
+        <el-select v-model="selectedShopId" placeholder="请选择商铺" @change="onShopChange" filterable style="flex:1">
+          <el-option v-for="s in shops" :key="s.id" :label="s.name" :value="s.id">
+            <span>{{ s.name }}</span>
+            <span style="float:right;color:#909399;font-size:12px;">{{ s.area }}</span>
+          </el-option>
+        </el-select>
+        <span style="font-size:12px;color:#909399;" v-if="shops.length>0">共 {{ shops.length }} 家</span>
+      </div>
+    </div>
+
+    <!-- 排队状态 -->
+    <div class="card" v-if="selectedShopId">
+      <h2>叫号状态</h2>
+      <div class="current-num">
+        <div class="big-num">{{ queueInfo.currentNumber || 0 }}</div>
+        <div class="label">当前叫号</div>
+      </div>
+      <div class="stats-row">
+        <div>
+          <div class="stat-val" style="color:#F63;">{{ queueInfo.waitingCount || 0 }}</div>
+          <div class="stat-lbl">等待中</div>
+        </div>
+        <div>
+          <div class="stat-val">{{ calledToday || 0 }}</div>
+          <div class="stat-lbl">今日已叫</div>
+        </div>
+      </div>
+      <el-button type="warning" @click="callNext" :loading="calling" :disabled="queueInfo.waitingCount===0"
+                 style="width:100%;margin-top:16px;font-size:16px;height:44px;">
+        叫下一个号
+      </el-button>
+      <div v-if="callResult" style="margin-top:12px;">
+        <el-alert :title="callResult.message" type="success" show-icon :closable="false"></el-alert>
+      </div>
+    </div>
+
+    <!-- 等待列表 -->
+    <div class="card" v-if="selectedShopId">
+      <h2>等待队列</h2>
+      <div class="waiting-list" v-if="queueInfo.waitingList && queueInfo.waitingList.length > 0">
+        <div class="waiting-item" v-for="(w,i) in queueInfo.waitingList" :key="i">
+          <div>
+            <span class="waiting-num">{{ w.queueNumber }}</span>
+            <span style="font-size:12px;color:#909399;margin-left:8px;">号</span>
+          </div>
+          <span class="waiting-info">{{ w.peopleCount }}人</span>
+        </div>
+      </div>
+      <div class="empty-state" v-else-if="!refreshing">
+        <i class="el-icon-circle-check"></i>
+        <p>暂无等待顾客</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="./js/vue.js"></script>
+<script src="./js/axios.min.js"></script>
+<script src="./js/element.js"></script>
+<script src="./js/common.js"></script>
+<script>
+  new Vue({
+    el: "#app",
+    data: {
+      shops: [],
+      selectedShopId: null,
+      queueInfo: { currentNumber: 0, waitingCount: 0, waitingList: [] },
+      calledToday: 0,
+      calling: false,
+      callResult: null,
+      refreshing: false
+    },
+    created() {
+      this.loadShops();
+    },
+    methods: {
+      loadShops() {
+        // 并行加载所有品类商铺，按名称排序
+        Promise.all(
+          [1,2,3,4,5,6,7,8,9,10].map(typeId =>
+            axios.get("/shop/of/type/no-geo", { params: { typeId, current: 1 } })
+            .then(({data}) => Array.isArray(data) ? data : (data && data.records) || [])
+            .catch(() => [])
+          )
+        ).then(results => {
+          var seen = {};
+          this.shops = [];
+          results.forEach(list => {
+            list.forEach(s => {
+              if (!seen[s.id]) { seen[s.id] = true; this.shops.push(s); }
+            });
+          });
+          this.shops.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh'));
+        });
+      },
+      onShopChange(shopId) {
+        if (shopId) this.refresh();
+      },
+      refresh() {
+        if (!this.selectedShopId) return;
+        this.refreshing = true; this.callResult = null;
+        axios.get("/queue-ticket/shop/"+this.selectedShopId)
+        .then(({data}) => {
+          this.queueInfo = data;
+          this.calledToday = data.currentNumber || 0;
+        }).catch(() => {}).finally(() => { this.refreshing = false; });
+      },
+      callNext() {
+        if (!this.selectedShopId) return;
+        this.calling = true; this.callResult = null;
+        axios.put("/queue-ticket/call/"+this.selectedShopId)
+        .then(({data}) => {
+          this.callResult = data;
+          this.$message.success(data.message || '叫号成功');
+          setTimeout(() => { this.refresh(); }, 500);
+        }).catch(err => {
+          this.$message.error(typeof err==='string'?err:(err.errorMsg||'叫号失败'));
+        }).finally(() => { this.calling = false; });
+      }
+    }
+  })
+</script>
+</body>
+</html>

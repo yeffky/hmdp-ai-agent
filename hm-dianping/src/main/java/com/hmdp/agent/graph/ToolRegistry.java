@@ -2,8 +2,8 @@ package com.hmdp.agent.graph;
 
 import com.hmdp.agent.tool.KnowledgeRetrievalTool;
 import com.hmdp.agent.tool.OrderQueryTool;
+import com.hmdp.agent.tool.QueueTicketTool;
 import com.hmdp.agent.tool.graph.GeoSearchTool;
-import com.hmdp.agent.tool.graph.ShopDetailTool;
 import com.hmdp.agent.tool.graph.Text2SqlTool;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import org.bsc.langgraph4j.langchain4j.tool.LC4jToolMapBuilder;
@@ -34,7 +34,7 @@ public class ToolRegistry {
     @Resource
     private GeoSearchTool geoSearchTool;
     @Resource
-    private ShopDetailTool shopDetailTool;
+    private QueueTicketTool queueTicketTool;
 
     @Bean
     public LC4jToolService toolService() {
@@ -42,9 +42,9 @@ public class ToolRegistry {
                 .toolsFromObject(
                         knowledgeRetrievalTool,
                         orderQueryTool,
+                        queueTicketTool,
                         text2SqlTool,
-                        geoSearchTool,
-                        shopDetailTool
+                        geoSearchTool
                 );
 
         LC4jToolService service = new LC4jToolService(builder.toolMap());

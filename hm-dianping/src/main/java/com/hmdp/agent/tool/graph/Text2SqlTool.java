@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
@@ -48,6 +49,16 @@ public class Text2SqlTool {
     @PostConstruct
     void init() {
         this.jdbcTemplate = new JdbcTemplate(dataSource);
+    }
+
+    /** 每2小时清除表名缓存，下次查询时从 MySQL 懒加载重建 */
+    @Scheduled(fixedRate = 2 * 60 * 60 * 1000, initialDelay = 2 * 60 * 60 * 1000)
+    public void scheduledEvictTableCache() {
+        try {
+            getSchemaService().evictTableNameCache();
+        } catch (Exception e) {
+            log.warn("Scheduled table cache eviction failed: {}", e.getMessage());
+        }
     }
 
     private TableSchemaService getSchemaService() {
@@ -113,18 +124,19 @@ public class Text2SqlTool {
                 return "查询执行失败: " + e.getMessage();
             }
 
+            String resultJson;
             if (rows.isEmpty()) {
-                return "[]";
+                resultJson = "[]";
+            } else {
+                int maxRows = 30;
+                if (rows.size() > maxRows) {
+                    rows = rows.subList(0, maxRows);
+                }
+                resultJson = JSONUtil.toJsonPrettyStr(rows);
             }
 
-            // 限制返回行数，避免 LLM 上下文爆炸
-            int maxRows = 30;
-            if (rows.size() > maxRows) {
-                rows = rows.subList(0, maxRows);
-            }
-
-            log.info("Text2SQL step3: {} rows returned (capped at {})", rows.size(), maxRows);
-            return JSONUtil.toJsonPrettyStr(rows);
+            log.info("Text2SQL step3: {} rows returned", rows.size());
+            return "【SQL】" + sql + "\n【结果】" + resultJson;
 
         } catch (Exception e) {
             log.error("Text2SQL failed for query: {}", description, e);
@@ -133,6 +145,8 @@ public class Text2SqlTool {
     }
 
     private Long getCurrentUserId() {
+        Long ctxUserId = com.hmdp.agent.ToolContext.getUserId();
+        if (ctxUserId != null && ctxUserId > 0) return ctxUserId;
         try {
             if (UserHolder.getUser() != null) return UserHolder.getUser().getId();
         } catch (Exception ignored) {}

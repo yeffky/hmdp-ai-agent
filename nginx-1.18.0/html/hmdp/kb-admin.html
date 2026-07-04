@@ -34,6 +34,28 @@
                       max-height: 120px; overflow-y: auto; background: #fff; padding: 8px 10px;
                       border-radius: 4px; border: 1px dashed #e8e8e8; }
         .chunk-empty { font-size: 12px; color: #c0c4cc; text-align: center; padding: 20px; }
+        .doc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .doc-table th { background: #f5f7fa; padding: 10px 12px; text-align: left; color: #909399;
+                        font-weight: 500; border-bottom: 1px solid #e8e8e8; }
+        .doc-table td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; color: #303133; }
+        .doc-table tr:hover td { background: #f5f7fa; }
+        .source-tag { display: inline-block; padding: 2px 8px; border-radius: 4px;
+                      font-size: 11px; background: #e6f7ff; color: #1890ff; }
+        .hash-tag { font-size: 11px; color: #c0c4cc; font-family: monospace; }
+        .doc-row { cursor: pointer; transition: background 0.15s; }
+        .doc-row:hover { background: #f0f5ff !important; }
+        .doc-row.expanded td { background: #f0f5ff; border-bottom: none; }
+        .chunk-detail-row td { padding: 0 !important; border-bottom: 1px solid #409eff; }
+        .chunk-detail-panel { background: #fafbfc; padding: 12px 20px; border-left: 3px solid #409eff; }
+        .chunk-detail-item { padding: 8px 0; border-bottom: 1px dashed #e8e8e8; }
+        .chunk-detail-item:last-child { border-bottom: none; }
+        .chunk-detail-header { display: flex; justify-content: space-between; align-items: center;
+                               font-size: 12px; margin-bottom: 4px; }
+        .chunk-detail-path { color: #409eff; font-weight: 500; }
+        .chunk-detail-meta { color: #c0c4cc; font-size: 11px; }
+        .chunk-detail-text { font-size: 12px; color: #606266; line-height: 1.6; white-space: pre-wrap;
+                             background: #fff; padding: 8px 10px; border-radius: 4px; border: 1px solid #eee;
+                             max-height: 150px; overflow-y: auto; }
     </style>
 </head>
 <body>
@@ -51,6 +73,59 @@
                     <div class="stat-label">向量总数</div>
                 </div>
             </div>
+        </div>
+
+        <!-- 已存储文档 -->
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h2 style="margin:0;">📋 已存储文档</h2>
+                <el-button size="small" @click="loadDocuments" :loading="loadingDocs" icon="el-icon-refresh">刷新</el-button>
+            </div>
+            <div v-if="documents.length === 0 && !loadingDocs" class="chunk-empty">知识库为空，请先摄取文档</div>
+            <table v-if="documents.length > 0" class="doc-table">
+                <thead><tr>
+                    <th style="width:100px;">来源</th>
+                    <th>标题</th>
+                    <th style="width:80px;">切片数</th>
+                    <th style="width:100px;">Hash</th>
+                    <th style="width:100px;">预览</th>
+                    <th style="width:70px;">操作</th>
+                </tr></thead>
+                <tbody>
+                    <template v-for="(d, i) in documents">
+                        <tr :key="i" class="doc-row" :class="{ expanded: d._expanded }" @click="toggleChunks(d)">
+                            <td><span class="source-tag">{{ d.source }}</span></td>
+                            <td>{{ d.title }}</td>
+                            <td>{{ d.chunkCount }}</td>
+                            <td><span class="hash-tag">{{ d.contentHash }}</span></td>
+                            <td style="font-size:12px;color:#909399;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ d.preview }}</td>
+                            <td>
+                                <el-button size="mini" type="danger" plain @click.stop="deleteDoc(d)" :loading="d._deleting">删除</el-button>
+                            </td>
+                        </tr>
+                        <tr v-if="d._expanded" :key="'chunk-' + i" class="chunk-detail-row">
+                            <td colspan="6">
+                                <div class="chunk-detail-panel">
+                                    <div v-if="d._loadingChunks" style="text-align:center;padding:20px;color:#909399;">
+                                        加载切片中...
+                                    </div>
+                                    <div v-else-if="d._chunks && d._chunks.length === 0" class="chunk-empty">无切片数据</div>
+                                    <div v-else v-for="(c, ci) in d._chunks" :key="ci" class="chunk-detail-item">
+                                        <div class="chunk-detail-header">
+                                            <span class="chunk-detail-path">
+                                                🧩 切片 #{{ c.chunkIndex }}
+                                                <span v-if="c.headingPath" style="margin-left:8px;">📁 {{ c.headingPath }}</span>
+                                            </span>
+                                            <span class="chunk-detail-meta">{{ c.length }} 字</span>
+                                        </div>
+                                        <div class="chunk-detail-text">{{ c.text }}</div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
         </div>
 
         <!-- 文档摄取 -->
@@ -87,7 +162,7 @@
         <div class="card">
             <h2>🔬 切片预览</h2>
             <p style="font-size:12px;color:#909399;margin-bottom:12px;">
-                粘贴 Markdown 文本，预览 MarkdownSplitter 按标题层级切分后的结构。以 <code>#</code> 开头自动走 Markdown 模式。
+                自适应切片器（AdaptiveSplitter）：优先识别文档结构标记（Markdown 标题 / 中文章节号 / 序号），保留 headingPath 层级路径；无结构时递归降级。所有 chunk 统一施加滑动窗口重叠。
             </p>
             <el-form label-width="0" size="small">
                 <el-form-item>
@@ -97,6 +172,7 @@
                 <el-form-item>
                     <el-button type="primary" @click="previewSplit" :loading="splitting">预览切片</el-button>
                     <el-button @click="loadMdExample">加载 Markdown 示例</el-button>
+                    <el-button @click="loadPdfExample">加载中文 PDF 示例</el-button>
                 </el-form-item>
             </el-form>
             <!-- 切片结果 -->
@@ -179,6 +255,7 @@ new Vue({
     el: '#app',
     data: {
         stats: { totalPoints: 0 },
+        documents: [], loadingDocs: false,
         ingestForm: { source: 'faq', title: '', content: '' },
         ingesting: false, ingestResult: '', ingestSuccess: false,
         searchQuery: '', searching: false, searched: false,
@@ -187,11 +264,62 @@ new Vue({
         splitContent: '', splitting: false, splitResult: null,
         seeding: false
     },
-    created() { this.loadStats(); },
+    created() { this.loadStats(); this.loadDocuments(); },
     methods: {
         loadStats() {
             axios.get('/kb/stats').then(r => {
                 if (r.data && r.data.data) this.stats = r.data.data;
+            }).catch(() => {});
+        },
+        loadDocuments() {
+            this.loadingDocs = true;
+            axios.get('/kb/documents').then(r => {
+                var body = r.data;
+                if (body && body.success === false) {
+                    this.$message.error(body.errorMsg || '获取文档列表失败');
+                    this.documents = [];
+                } else {
+                    this.documents = (body && body.data) || [];
+                }
+            }).catch(e => {
+                this.$message.error('请求失败: ' + (e.response?.data?.errorMsg || e.message));
+                this.documents = [];
+            }).finally(() => { this.loadingDocs = false; });
+        },
+        toggleChunks(doc) {
+            if (doc._expanded) {
+                this.$set(doc, '_expanded', false);
+                return;
+            }
+            this.$set(doc, '_expanded', true);
+            if (doc._chunks) return;
+            this.$set(doc, '_loadingChunks', true);
+            this.$set(doc, '_chunks', []);
+            axios.get('/kb/documents/chunks', { params: { source: doc.source, title: doc.title } }).then(r => {
+                var body = r.data;
+                if (body && body.success === false) {
+                    this.$message.error(body.errorMsg || '获取切片失败');
+                } else {
+                    this.$set(doc, '_chunks', body && body.data || []);
+                }
+            }).catch(e => {
+                this.$message.error('获取切片失败: ' + (e.response?.data?.errorMsg || e.message));
+            }).finally(() => {
+                this.$set(doc, '_loadingChunks', false);
+            });
+        },
+        deleteDoc(doc) {
+            this.$confirm('确认删除「' + doc.title + '」吗？其所有切片将被移除。', '删除确认', {
+                confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning'
+            }).then(() => {
+                doc._deleting = true;
+                axios.delete('/kb/document', { params: { source: doc.source, title: doc.title } }).then(() => {
+                    this.$message.success('已删除 ' + doc.title);
+                    this.loadDocuments();
+                    this.loadStats();
+                }).catch(e => {
+                    this.$message.error('删除失败: ' + (e.response?.data?.msg || e.message));
+                }).finally(() => { doc._deleting = false; });
             }).catch(() => {});
         },
         ingest() {
@@ -201,6 +329,7 @@ new Vue({
                 this.ingestResult = r.data.data || r.data.msg || '摄入成功';
                 this.ingestSuccess = true;
                 this.loadStats();
+                this.loadDocuments();
             }).catch(e => {
                 this.ingestResult = '摄入失败: ' + (e.response?.data?.msg || e.message);
                 this.ingestSuccess = false;
@@ -268,6 +397,28 @@ new Vue({
               '| 樱花日料 | 日料 | ¥200 | 4.7 | 东城区王府井2号 | 刺身拼盘、寿司 |\n\n' +
               '以上商家均支持优惠券使用，具体规则请查看各商家详情页。';
         },
+        loadPdfExample() {
+            this.splitContent = '第一章 项目概述\n\n' +
+              '本项目是内网任务比对转发平台，实现客户端发送算法比对任务，经过平台持久化存储、XML文件解析重包装并转发到算法端；算法端返回算法处理结果，经过平台持久化存储和文件解析处理后转发回客户端。\n\n' +
+              '第一节 系统背景\n\n' +
+              '随着业务量的增长和算法复杂度的提升，传统的单点处理模式已经无法满足实时比对的需求。本系统通过分布式架构设计，将任务的接收、处理、转发和结果回传等环节解耦，提高了系统的吞吐量和可靠性。\n\n' +
+              '（一）业务需求\n\n' +
+              '当前业务场景中，客户端每秒产生约500条比对任务，每条任务包含XML格式的配置文件和多个附件。系统需要保证任务不丢失、不重复，且在3秒内完成一次完整的比对流程。\n\n' +
+              '（二）技术挑战\n\n' +
+              '主要技术挑战包括：高并发场景下的消息可靠性投递、大文件传输的OOM风险控制、跨系统异构数据的格式转换，以及系统的可扩展性和容灾能力。\n\n' +
+              '第二节 技术架构\n\n' +
+              '系统采用Spring Boot作为基础框架，集成Flume实现分布式数据采集，通过Kafka进行异步消息流转，利用Flink实现流式数据处理，最终将结构化数据持久化到HDFS分布式文件系统。\n\n' +
+              '一、数据采集层\n\n' +
+              '基于Flume构建分布式数据采集体系，实时采集客户端请求，通过自定义Sink处理将消息推送到Kafka。Flume采用多Agent部署模式，每个Agent负责一个区域的客户端流量，实现了负载均衡和故障转移。\n\n' +
+              '二、消息队列层\n\n' +
+              '利用Kafka Topic和Partition性质，调整生产者消息写入策略，将并发写入效率提升15%至20%。通过调整Kafka消息保存策略，解决了偶发性的大文件读写OOM问题以及重平衡问题。\n\n' +
+              '三、流处理层\n\n' +
+              'Flink消费Kafka中的消息流，完成XML任务文件的解析和转换。将XML格式转换为JSON格式后，通过WebClient封装HTTP请求发送给算法端。Flink的检查点机制保障了任务处理的精确一次语义。\n\n' +
+              '四、存储层\n\n' +
+              '原始数据和转换结果按照日期分区存储到HDFS，便于后续的数据回溯和分析。同时将任务状态信息写入PostgreSQL，供前端查询面板实时展示任务处理进度。\n\n' +
+              '第三节 部署与联调\n\n' +
+              '项目现场部署涉及6台服务器节点的集群搭建，包括Kafka集群、Flink集群和HDFS集群的配置。完成与5家厂商算法端的接口对接联调，负责现场运行环境报错日志排查和处理。';
+        },
         seedData() {
             this.seeding = true;
             const items = [
@@ -285,6 +436,7 @@ new Vue({
                     if (done >= total) {
                         this.$message.success(`成功导入 ${total} 条种子数据`);
                         this.loadStats();
+                        this.loadDocuments();
                     }
                 }).catch(() => { done++; });
             });

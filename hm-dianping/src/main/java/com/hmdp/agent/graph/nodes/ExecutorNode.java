@@ -1,10 +1,13 @@
 package com.hmdp.agent.graph.nodes;
 
+import com.hmdp.agent.ToolContext;
 import com.hmdp.agent.graph.error.ErrorCategory;
 import com.hmdp.agent.graph.error.ErrorClassifier;
 import com.hmdp.agent.graph.state.ReActAgentState;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.data.message.TextContent;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.invocation.InvocationContext;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.data.message.SystemMessage;
@@ -71,8 +74,11 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
             sb.append("\n");
         }
         sb.append("## 规则\n");
+        sb.append("- 当前步骤必须是可执行的工具调用。如果步骤内容是「告知用户」「让用户选择」「提示用户」等非工具操作，输出 ask_user 把消息传给用户，不要自行调用工具\n");
+        sb.append("- 如果上一步结果摘要中有 [自动重试] 提示，说明上次查询返回空：必须扩大搜索范围（查更多表、用更宽松匹配），不要用完全相同的参数重试\n");
+        sb.append("- 如果 [自动重试 2/2] 后仍为空，输出 ask_user 如实告知用户未找到数据，不要继续重试\n");
         sb.append("- [必填] 参数必须全部提供，缺一不可！如果缺少必填参数，必须输出 ask_user\n");
-        sb.append("- typeId 是整数不是字符串！不确定时先调 searchKnowledge 查映射表\n");
+        sb.append("- 禁止编造参数值！如果用户没有提供某个必填参数的值，且之前的工具结果中也找不到，必须输出 ask_user\n");
         sb.append("- 参数不足时输出 {\"ask_user\": true, \"missing\": \"缺少什么参数\"}\n");
         sb.append("- 信息足够时输出 {\"tool\": \"工具名\", \"args\": {...}}\n");
         return sb.toString();
@@ -94,23 +100,27 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
         // ============================================================
         // 正常模式：LLM 选择工具 → 执行 → 分类结果
         // ============================================================
-        String plan = state.planJson() != null ? state.planJson() : "{}";
+        String plan = state.remainPlan() != null && !state.remainPlan().isEmpty()
+                ? state.remainPlan() : "{}";
 
         StringBuilder prompt = new StringBuilder();
-        prompt.append("选择一个工具执行。只输出JSON: {\"tool\": \"工具名\", \"args\": {...}}\n\n");
-
-        prompt.append(state.contextBlock()).append("\n");
+        prompt.append("选择一个工具执行。严格遵循计划。只输出JSON: {\"tool\": \"工具名\", \"args\": {...}}\n\n");
 
         prompt.append("用户: ").append(query).append("\n");
-        prompt.append("计划: ").append(plan).append("\n");
+        prompt.append("待执行步骤: ").append(plan).append("\n");
+        String obs = state.observerReport();
+        if (obs != null && !obs.isEmpty()) {
+            prompt.append("上一步结果摘要: ").append(obs).append("\n");
+        }
         prompt.append("工具结果: ").append(PlannerNode.formatToolResults(scratchpad)).append("\n\n");
         prompt.append(toolSchemaPrompt);
+        log.info("tool prompt:{}", prompt);
 
         // Step 1 — LLM 选工具
         String raw;
         try {
             ChatResponse resp = model.chat(List.of(
-                    SystemMessage.from("你是工具调度器。只输出JSON。"),
+                    SystemMessage.from("你是工具调度器。严格按计划执行。必填参数缺一不可，禁止编造值（如坐标填0）。只输出JSON。"),
                     UserMessage.from(prompt.toString())));
             raw = resp.aiMessage().text().trim();
             log.info("Executor call: {}", raw);
@@ -140,12 +150,15 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                     "nextNode", "answer");
         }
 
-        // Step 3 — 执行工具
+        // Step 3 — 执行工具（设置 ToolContext 让工具跨线程读取 userId）
         ToolExecutionRequest request = ToolExecutionRequest.builder()
                 .name(toolName)
                 .arguments(argsStr)
                 .build();
 
+        Long uid = state.userId();
+        log.info("ExecutorNode: setting userId={} into ToolContext for tool {}", uid, toolName);
+        ToolContext.setUserId(uid);
         try {
             var execResult = toolService.execute(
                     List.of(request),
@@ -162,11 +175,13 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                 String key = "result_" + (scratchpad.size() + 1);
                 scratchpad.put(key, result);
                 scratchpad.put("_last_tool", toolName);
+                scratchpad.put("_last_args", argsStr);
                 scratchpad.put("_last_result", result);
                 String truncated = result.length() > 200 ? result.substring(0, 200) + "..." : result;
                 log.info("Tool {} returned success, stored as {}: {}", toolName, key, truncated);
                 return Map.of("scratchpad", scratchpad,
                         "retryCount", 0,
+                        "emptyResultRetries", 0,
                         "errorCategory", "",
                         "lastToolName", "",
                         "lastToolArgs", "",
@@ -185,6 +200,8 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
             scratchpad.put("error", errDetail);
             return handleError(state, ErrorClassifier.classifyException(e),
                     toolName, argsStr, errDetail, scratchpad);
+        } finally {
+            ToolContext.clear();
         }
     }
 
@@ -203,6 +220,9 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                 .arguments(argsStr)
                 .build();
 
+        Long uid = state.userId();
+        log.info("ExecutorNode(retry): setting userId={} into ToolContext for tool {}", uid, toolName);
+        ToolContext.setUserId(uid);
         try {
             var execResult = toolService.execute(
                     List.of(request),
@@ -218,11 +238,13 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                 String key = "result_" + (scratchpad.size() + 1);
                 scratchpad.put(key, result);
                 scratchpad.put("_last_tool", toolName);
+                scratchpad.put("_last_args", argsStr);
                 scratchpad.put("_last_result", result);
                 log.info("Retry succeeded for tool {}, stored as {}: {}",
                         toolName, key, result.length() > 200 ? result.substring(0, 200) + "..." : result);
                 return Map.of("scratchpad", scratchpad,
                         "retryCount", 0,
+                        "emptyResultRetries", 0,
                         "errorCategory", "",
                         "lastToolName", "",
                         "lastToolArgs", "",
@@ -242,6 +264,8 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
             ErrorCategory cat = ErrorClassifier.classifyException(e);
             // 如果还是 RETRYABLE，让 retryGate 处理（继续重试或耗尽）
             return handleError(state, cat, toolName, argsStr, errDetail, scratchpad);
+        } finally {
+            ToolContext.clear();
         }
     }
 
@@ -311,30 +335,32 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
             }
             case USER_FIXABLE -> {
                 log.info("Error categorized as USER_FIXABLE for tool {}", toolName);
-                String question = buildUserFixableMessage(toolName, errorDetail);
-                scratchpad.put("ask_user_missing", question);
+                String ctx = buildErrorContext(state, toolName, errorDetail, "USER_FIXABLE");
+                scratchpad.put("ask_user_missing", errorDetail);
                 yield Map.of(
                         "scratchpad", scratchpad,
                         "errorCategory", ErrorCategory.USER_FIXABLE.name(),
+                        "errorContext", ctx,
                         "retryCount", 0,
                         "lastToolName", "",
                         "lastToolArgs", "",
-                        "finalAnswer", question,
+                        "finalAnswer", "__ERROR__",
                         "nextNode", "answer"
                 );
             }
             case FATAL -> {
                 log.warn("Error categorized as FATAL for tool {}", toolName);
                 int fatals = state.fatalErrorCount() + 1;
-                String msg = buildFatalMessage(toolName, errorDetail);
+                String ctx = buildErrorContext(state, toolName, errorDetail, "FATAL");
                 yield Map.of(
                         "scratchpad", scratchpad,
                         "errorCategory", ErrorCategory.FATAL.name(),
+                        "errorContext", ctx,
                         "retryCount", 0,
                         "lastToolName", "",
                         "lastToolArgs", "",
                         "fatalErrorCount", fatals,
-                        "finalAnswer", msg,
+                        "finalAnswer", "__ERROR__",
                         "nextNode", "answer"
                 );
             }
@@ -342,42 +368,22 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
     }
 
     // ============================================================
-    // 错误消息生成
+    // 错误上下文生成 — 交给 AnswerNode 做用户友好的脱敏输出
     // ============================================================
-    private String buildUserFixableMessage(String toolName, String errorDetail) {
-        String missingParam = extractMissingParam(errorDetail);
-        if (missingParam != null) {
-            return "请提供以下信息：" + missingParam;
-        }
-        return "请提供更多信息以便为您查询";
-    }
-
-    private String buildFatalMessage(String toolName, String errorDetail) {
-        if (errorDetail.contains("未登录") || errorDetail.contains("登录")) {
-            return "您当前未登录，请先登录后再查询。";
-        }
-        if (errorDetail.contains("不存在") || errorDetail.contains("not found")) {
-            return "未找到相关信息，请检查查询条件。";
-        }
-        return "抱歉，查询服务暂时不可用，请稍后重试。";
-    }
-
-    /** 从异常消息中提取缺失的参数名 */
-    private String extractMissingParam(String errMsg) {
-        if (errMsg == null) return null;
-        int i = errMsg.indexOf("Required parameter \"");
-        if (i < 0) return null;
-        i += "Required parameter \"".length();
-        int j = errMsg.indexOf("\"", i);
-        if (j > i) {
-            String param = errMsg.substring(i, j);
-            return switch (param) {
-                case "x" -> "您的位置经度（或开启定位权限）";
-                case "y" -> "您的位置纬度（或开启定位权限）";
-                default -> param + "参数";
-            };
-        }
-        return null;
+    private String buildErrorContext(ReActAgentState state, String toolName,
+                                      String errorDetail, String category) {
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("【错误类型】").append(category).append("\n");
+        ctx.append("【用户问题】").append(state.userQuery()).append("\n");
+        ctx.append("【当前计划】").append(state.remainPlan() != null && !state.remainPlan().isEmpty()
+                ? state.remainPlan() : "无").append("\n");
+        ctx.append("【出错工具】").append(toolName).append("\n");
+        // 脱敏处理：截断过长错误，去掉 SQL 等敏感信息
+        String safe = errorDetail != null ? errorDetail : "未知错误";
+        if (safe.length() > 500) safe = safe.substring(0, 500) + "...";
+        safe = safe.replaceAll("(?i)(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER)\\s+.*", "[SQL已脱敏]");
+        ctx.append("【错误详情】").append(safe).append("\n");
+        return ctx.toString();
     }
 
     // ======== JSON 解析（保持兼容 LLM 输出格式）========
@@ -418,13 +424,26 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
         return className.replace("Json", "").replace("Schema", "").toLowerCase();
     }
 
+    /**
+     * 从 Command 中提取纯净的工具执行结果文本。
+     * 避免 ToolExecutionResultMessage 包装类的 toString（含 id、contents 等噪音）
+     * 污染 scratchpad，导致后续 LLM 调用时关键字段被噪声淹没。
+     */
     private String extractToolResult(Command command) {
         if (command == null || command.update() == null) {
             return "工具执行完成";
         }
         Object val = command.update().get("toolResults");
         if (val instanceof java.util.List<?> list && !list.isEmpty()) {
-            return list.get(list.size() - 1).toString();
+            Object last = list.get(list.size() - 1);
+            if (last instanceof ToolExecutionResultMessage msg) {
+                return msg.contents().stream()
+                        .filter(c -> c instanceof TextContent)
+                        .map(c -> ((TextContent) c).text())
+                        .reduce((a, b) -> a + "\n" + b)
+                        .orElse("工具执行完成");
+            }
+            return last.toString();
         }
         return "工具执行完成";
     }

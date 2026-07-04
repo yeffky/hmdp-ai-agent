@@ -62,13 +62,16 @@ public class GraphConfig {
     private SlidingWindowManager windowManager;
     @Autowired
     private UserStore userStore;
+    @Autowired
+    private com.hmdp.repository.ChatHistoryRepository chatHistoryRepo;
 
     @Bean("reactGraph")
     public CompiledGraph<ReActAgentState> reactGraph() throws Exception {
-        ContextNode contextNode = new ContextNode(windowManager, userStore);
-        PlannerNode planner = new PlannerNode(model, maxIterations);
+        ContextNode contextNode = new ContextNode(windowManager, userStore, chatHistoryRepo);
+        PlannerNode planner = new PlannerNode(model, maxIterations, toolService);
         ExecutorNode executor = new ExecutorNode(model, toolService, llmErrorClassify);
         ObserverNode observer = new ObserverNode(model, maxIterations);
+        JudgeNode judgeNode = new JudgeNode(model);
         AnswerNode answerNode = new AnswerNode(model);
         RetryGateNode retryGate = new RetryGateNode(maxRetries);
 
@@ -83,12 +86,17 @@ public class GraphConfig {
              .addNode("planner",  AsyncNodeAction.node_async(planner))
              .addNode("executor", AsyncNodeAction.node_async(executor))
              .addNode("observer", AsyncNodeAction.node_async(observer))
+             .addNode("judgeNode", AsyncNodeAction.node_async(judgeNode))
              .addNode("answer",   AsyncNodeAction.node_async(answerNode))
              .addNode("retryGate", AsyncNodeAction.node_async(retryGate));
 
         graph.addEdge(GraphDefinition.START, "context");
         graph.addEdge("context", "planner");
-        graph.addEdge("planner", "executor");
+        graph.addConditionalEdges("planner",
+                s -> CompletableFuture.completedFuture(
+                        s.nextNode() != null ? s.nextNode() : "executor"),
+                Map.of("executor", "executor",
+                        "answer", "answer"));
 
         // executor 三路条件路由：observer（正常）/ retryGate（可重试）/ answer（用户修正或致命）
         graph.addConditionalEdges("executor",
@@ -105,10 +113,21 @@ public class GraphConfig {
                 Map.of("executor", "executor",
                         "answer", "answer"));
 
+        // observer 四路路由：executor（继续执行）/ judgeNode（判断充分性）/ retryGate（错误重试）/ answer（透传）
         graph.addConditionalEdges("observer",
                 s -> CompletableFuture.completedFuture(
+                        s.nextNode() != null ? s.nextNode() : "judgeNode"),
+                Map.of("executor", "executor",
+                        "judgeNode", "judgeNode",
+                        "retryGate", "retryGate",
+                        "answer", "answer"));
+
+        // judgeNode 两路路由：answer（充分/需用户补充）/ planner（不足，重新规划）
+        graph.addConditionalEdges("judgeNode",
+                s -> CompletableFuture.completedFuture(
                         s.nextNode() != null ? s.nextNode() : "answer"),
-                Map.of("context", "context", "plan", "planner", "answer", "answer", "ask_user", "answer"));
+                Map.of("answer", "answer",
+                        "planner", "planner"));
 
         graph.addEdge("answer", GraphDefinition.END);
 

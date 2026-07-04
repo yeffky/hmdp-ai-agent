@@ -1298,4 +1298,23 @@ CREATE TABLE `tb_chat_message` (
   INDEX `idx_user_id` (`user_id`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact COMMENT = 'AI客服聊天记录';
 
+-- ----------------------------
+-- Table structure for tb_queue_ticket
+-- ----------------------------
+DROP TABLE IF EXISTS `tb_queue_ticket`;
+CREATE TABLE `tb_queue_ticket`  (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `shop_id` bigint(20) NOT NULL COMMENT '商铺id',
+  `user_id` bigint(20) UNSIGNED NOT NULL COMMENT '用户id',
+  `queue_number` int(10) UNSIGNED NOT NULL COMMENT '当日排队号',
+  `people_count` int(10) UNSIGNED NOT NULL DEFAULT 2 COMMENT '用餐人数',
+  `status` tinyint(1) UNSIGNED NOT NULL DEFAULT 0 COMMENT '状态: 0排队中/1已叫号/2已取消/3已完成(已入座)',
+  `remark` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '备注',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '取号时间',
+  `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_shop_status` (`shop_id`, `status`) USING BTREE,
+  KEY `idx_user_id` (`user_id`) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 1 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact COMMENT = '排队取号';
+
 SET FOREIGN_KEY_CHECKS = 1;

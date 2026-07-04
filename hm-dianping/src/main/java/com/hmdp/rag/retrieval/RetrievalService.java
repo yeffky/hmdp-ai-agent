@@ -3,6 +3,7 @@ package com.hmdp.rag.retrieval;
 import com.hmdp.rag.embedding.EmbeddingService;
 import com.hmdp.rag.model.DocumentChunk;
 import com.hmdp.rag.model.SearchResult;
+import com.hmdp.rag.rerank.Reranker;
 import com.hmdp.rag.store.QdrantVectorStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,13 +12,14 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * 检索服务 — 多路向量检索 + RRF 融合。
+ * 检索服务 — 混合检索（语义向量 + BM25 关键词）+ RRF 融合 + Rerank 重排序。
  *
  * <h3>召回管线</h3>
  * <ol>
  *   <li>LLM 查询改写 → 生成 N 个变体</li>
- *   <li>每个变体独立向量检索 → N 路结果</li>
+ *   <li>每变体双路召回：语义向量检索 + BM25 关键词检索</li>
  *   <li>RRF (Reciprocal Rank Fusion) 融合去重排序</li>
+ *   <li>LLM Rerank 重排序</li>
  *   <li>返回 Top-K 结果</li>
  * </ol>
  *
@@ -32,33 +34,44 @@ public class RetrievalService {
     private final EmbeddingService embedding;
     private final QdrantVectorStore store;
     private final LLMQueryRewriter rewriter;
+    private final BM25KeywordIndex bm25Index;
+    private final Reranker reranker;
     private final int topK;
     private final double scoreThreshold;
 
     public RetrievalService(EmbeddingService embedding, QdrantVectorStore store,
                             LLMQueryRewriter rewriter,
+                            BM25KeywordIndex bm25Index, Reranker reranker,
                             int topK, double scoreThreshold) {
         this.embedding = embedding;
         this.store = store;
         this.rewriter = rewriter;
+        this.bm25Index = bm25Index;
+        this.reranker = reranker;
         this.topK = topK;
         this.scoreThreshold = scoreThreshold;
     }
 
     /**
-     * 多路检索：LLM 改写 → 多路向量检索 → RRF 融合。
+     * 混合检索：LLM 改写 → 语义向量 + BM25 双路召回 → RRF 融合 → Rerank 重排序。
      */
     public List<SearchResult> search(String query) {
         // 1. LLM 改写查询
         List<String> variantQueries = rewriter.rewrite(query);
         log.info("Query rewritten to {} variants: {}", variantQueries.size(), variantQueries);
 
-        // 2. 每路独立向量检索
+        // 2. 每变体双路召回：语义向量 + BM25 关键词
         List<List<SearchResult>> allResultLists = new ArrayList<>();
         for (String variant : variantQueries) {
-            List<SearchResult> results = singleVectorSearch(variant);
-            if (!results.isEmpty()) {
-                allResultLists.add(results);
+            // 语义检索
+            List<SearchResult> vecResults = singleVectorSearch(variant);
+            if (!vecResults.isEmpty()) {
+                allResultLists.add(vecResults);
+            }
+            // BM25 关键词检索
+            List<SearchResult> kwResults = bm25Index.search(variant, topK * 2);
+            if (!kwResults.isEmpty()) {
+                allResultLists.add(kwResults);
             }
         }
 
@@ -66,13 +79,23 @@ public class RetrievalService {
             return Collections.emptyList();
         }
 
-        // 单路直接返回
+        // 单路直接返回（跳过 RRF）
         if (allResultLists.size() == 1) {
-            return allResultLists.get(0);
+            List<SearchResult> single = allResultLists.get(0);
+            return single.size() > topK ? single.subList(0, topK) : single;
         }
 
         // 3. RRF 融合
-        return rrfFusion(allResultLists);
+        List<SearchResult> fused = rrfFusion(allResultLists);
+        log.info("Hybrid retrieval: {} lists → RRF fused {} results",
+                allResultLists.size(), fused.size());
+
+        // 4. Rerank 重排序
+        if (reranker != null && fused.size() > topK) {
+            fused = reranker.rerank(query, fused, topK);
+        }
+
+        return fused.size() > topK ? fused.subList(0, topK) : fused;
     }
 
     /** 单路向量检索 */

@@ -19,4 +19,18 @@ public class RedisConstants {
     public static final String FEED_KEY = "feed:";
     public static final String SHOP_GEO_KEY = "shop:geo:";
     public static final String USER_SIGN_KEY = "sign:";
+
+    // ========== 排队取号 ==========
+    /** 当日排队序号计数器，key: queue:seq:{shopId}:{date} */
+    public static final String QUEUE_SEQ_KEY = "queue:seq:";
+    /** 等待队列 ZSET，score=排队号, member=userId:queueNumber:peopleCount */
+    public static final String QUEUE_WAITING_KEY = "queue:waiting:";
+    /** 当前叫号，key: queue:current:{shopId}:{date} */
+    public static final String QUEUE_CURRENT_KEY = "queue:current:";
+    /** 用户当前排队 ticketId，key: queue:user:{userId} */
+    public static final String QUEUE_USER_KEY = "queue:user:";
+    /** 排队详情 Hash，key: queue:ticket:{ticketId} */
+    public static final String QUEUE_TICKET_KEY = "queue:ticket:";
+    /** 排队相关 Key 的过期秒数（1天 + 1小时缓冲） */
+    public static final Long QUEUE_TTL = 90000L;
 }

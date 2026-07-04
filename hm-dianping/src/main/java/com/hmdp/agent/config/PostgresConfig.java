@@ -50,6 +50,7 @@ public class PostgresConfig {
     public JdbcTemplate postgresJdbcTemplate(@Qualifier("postgresDataSource") DataSource postgresDataSource) {
         JdbcTemplate jdbc = new JdbcTemplate(postgresDataSource);
         initUserProfileTable(jdbc);
+        initChatHistoryTable(jdbc);
         return jdbc;
     }
 
@@ -66,6 +67,27 @@ public class PostgresConfig {
             log.info("tb_user_profile table ready");
         } catch (Exception e) {
             log.error("Failed to init tb_user_profile: {}", e.getMessage());
+        }
+    }
+
+    private void initChatHistoryTable(JdbcTemplate jdbc) {
+        try {
+            jdbc.execute(
+                "CREATE TABLE IF NOT EXISTS tb_chat_history (" +
+                "  id BIGSERIAL PRIMARY KEY," +
+                "  user_id BIGINT NOT NULL," +
+                "  user_message TEXT NOT NULL," +
+                "  assistant_message TEXT," +
+                "  create_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP" +
+                ")"
+            );
+            jdbc.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chat_history_user_id " +
+                "ON tb_chat_history(user_id, id DESC)"
+            );
+            log.info("tb_chat_history table ready");
+        } catch (Exception e) {
+            log.error("Failed to init tb_chat_history: {}", e.getMessage());
         }
     }
 }

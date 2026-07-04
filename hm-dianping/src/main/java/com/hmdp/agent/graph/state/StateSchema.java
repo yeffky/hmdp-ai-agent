@@ -65,11 +65,14 @@ public final class StateSchema {
     public static final Channel<String> SESSION_ID          = lww("");
     public static final Channel<String> USER_QUERY          = lww("");
     public static final Channel<String> PLAN_JSON           = lww("");
+    public static final Channel<String> REMAIN_PLAN         = lww("");
     public static final Channel<String> FINAL_ANSWER        = lww("");
     public static final Channel<String> NEXT_NODE           = lww("context");
     public static final Channel<String> COMPRESSED_SUMMARY  = lww("");
     public static final Channel<String> OBSERVER_FEEDBACK   = lww("");
+    public static final Channel<String> OBSERVER_REPORT     = lww("");
     public static final Channel<String> CONTEXT_BLOCK       = lww("");
+    public static final Channel<String> STREAMING_PROMPT    = lww("");
     public static final Channel<Integer> ITERATION          = lww(0);
     public static final Channel<Integer> TOOL_FAILURES       = lww(0);
     public static final Channel<Integer> RETRY_COUNT         = lww(0);
@@ -77,6 +80,9 @@ public final class StateSchema {
     public static final Channel<String>  LAST_TOOL_NAME      = lww("");
     public static final Channel<String>  LAST_TOOL_ARGS      = lww("");
     public static final Channel<Integer> FATAL_ERROR_COUNT   = lww(0);
+    public static final Channel<Long>    USER_ID              = lww(0L);
+    public static final Channel<String>  ERROR_CONTEXT        = lww("");
+    public static final Channel<Integer> EMPTY_RESULT_RETRIES = lww(0);
 
     // ======== Channel Map ========
 
@@ -87,11 +93,14 @@ public final class StateSchema {
         channels.put("sessionId",         SESSION_ID);
         channels.put("userQuery",         USER_QUERY);
         channels.put("planJson",          PLAN_JSON);
+        channels.put("remainPlan",        REMAIN_PLAN);
         channels.put("finalAnswer",       FINAL_ANSWER);
         channels.put("nextNode",          NEXT_NODE);
         channels.put("compressedSummary", COMPRESSED_SUMMARY);
         channels.put("observerFeedback",  OBSERVER_FEEDBACK);
+        channels.put("observerReport",    OBSERVER_REPORT);
         channels.put("contextBlock",      CONTEXT_BLOCK);
+        channels.put("streamingPrompt",  STREAMING_PROMPT);
         channels.put("iteration",         ITERATION);
         channels.put("toolFailures",       TOOL_FAILURES);
         channels.put("retryCount",         RETRY_COUNT);
@@ -99,6 +108,9 @@ public final class StateSchema {
         channels.put("lastToolName",       LAST_TOOL_NAME);
         channels.put("lastToolArgs",       LAST_TOOL_ARGS);
         channels.put("fatalErrorCount",    FATAL_ERROR_COUNT);
+        channels.put("userId",             USER_ID);
+        channels.put("errorContext",       ERROR_CONTEXT);
+        channels.put("emptyResultRetries", EMPTY_RESULT_RETRIES);
         return channels;
     }
 }
