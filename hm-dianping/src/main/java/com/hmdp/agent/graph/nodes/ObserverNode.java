@@ -35,6 +35,36 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
 
     @Override
     public Map<String, Object> apply(ReActAgentState state) throws Exception {
+        // ============================================================
+        // 确认恢复检测：用户回复了之前的 ask_user，LLM 判断是否匹配
+        // ============================================================
+        String userChoice = state.userChoice();
+        if (userChoice != null && !userChoice.isEmpty()) {
+            String prompt = state.confirmationPrompt();
+            boolean matches = validateUserResponse(prompt, userChoice);
+            if (!matches) {
+                log.info("Observer: user response doesn't match confirmation context, routing to planner for replan");
+                return Map.of("observerReport",
+                        "用户回复了「" + userChoice + "」，但与上一个问题「" + prompt + "」无关，需要重新规划。",
+                        "nextNode", "planner",
+                        "userChoice", "");  // 清空，避免下次再触发
+            }
+            log.info("Observer: user response validated, continuing from confirmation — {}", userChoice);
+            // 用户回复有效 → 写入 scratchpad 供后续 executor 使用，继续当前流程
+            Map<String, Object> sp = state.scratchpad();
+            sp.put("_user_response", userChoice);
+            return Map.of("scratchpad", sp,
+                    "userChoice", "",  // 清空标记
+                    "nextNode", "executor");
+        }
+
+        // executor 已预设 answer（ask_user / 异常），先检查是否有异常但工具已执行
+        if ("answer".equals(state.nextNode()) && isToolActuallyExecuted(state)) {
+            log.info("Observer: executor reported error but toolCallCount increased, tool executed — forwarding to judgeNode");
+            return Map.of("nextNode", "judgeNode",
+                    "observerReport", "工具执行后发生异常，但调用已成功，结果见下方数据。");
+        }
+
         // executor 已预设 answer（ask_user / 异常），直接放行
         if ("answer".equals(state.nextNode())) {
             return Map.of("nextNode", "answer");
@@ -66,7 +96,8 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
             String nextRemain = stripFirstStep(remainPlan);
             result.put("observerReport", report + "\n\n[扩大搜索 " + retries + " 次后仍未找到匹配数据]");
             result.put("remainPlan", nextRemain);
-            result.put("nextNode", "judgeNode");  // 重试耗尽，交给 judge 决定
+            result.put("emptyResultRetries", 0);  // 重试耗尽，清零，避免影响下一轮
+            result.put("nextNode", "judgeNode");
             return result;
         }
 
@@ -76,6 +107,7 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
         String nextRemain = stripFirstStep(remainPlan);
         result.put("observerReport", report);
         result.put("remainPlan", nextRemain);
+        result.put("emptyResultRetries", 0);  // 有数据时清零重试计数
 
         // 上一步返回空结果 → 后续步骤可能依赖此数据，不能盲目推进
         // 交给 judgeNode 决定是 replan 还是继续
@@ -133,18 +165,24 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
             if (k.startsWith("_") || k.equals("error") || k.equals("ask_user_missing")) continue;
             hasContent = true;
             String v = e.getValue() != null ? e.getValue().toString().trim() : "";
-            // 有实际数据
-            if (!v.isEmpty()
-                    && !v.equals("[]")
-                    && !v.contains("\"rows\": 0")
-                    && !v.contains("0 rows returned")
-                    && !v.contains("未匹配到数据")
-                    && !v.equals("无有效工具执行结果")) {
+            if (v.isEmpty()) continue;
+            // 有实际数据（非空信号）
+            if (!isResultEmptyValue(v)) {
                 hasData = true;
                 break;
             }
         }
         return hasContent && !hasData;
+    }
+
+    /** 判断单个结果值是否为空 */
+    private static boolean isResultEmptyValue(String v) {
+        return v.equals("[]")
+                || v.equals("无有效工具执行结果")
+                || v.contains("\"rows\": 0")
+                || v.contains("0 rows returned")
+                || v.contains("未匹配到数据")
+                || v.contains("【结果】[]");  // Text2SQL 空结果格式
     }
 
     /**
@@ -156,22 +194,69 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
         Object last = sp.get("_last_result");
         if (last == null) return false;
         String v = last.toString().trim();
-        return v.isEmpty()
-                || v.equals("[]")
-                || v.contains("0 rows returned")
-                || v.contains("\"rows\": 0")
-                || v.contains("未匹配到数据");
+        return v.isEmpty() || isResultEmptyValue(v);
     }
 
     /**
      * 构造扩大搜索的重试提示，注入到 observerReport 中传给 Executor。
      */
     private static String buildRetryHint(String originalReport, int retryNum) {
-        return originalReport
-                + "\n\n[自动重试 " + retryNum + "/2] 上一步查询返回空结果。请尝试扩大搜索范围：\n"
-                + "- 如果在上一步只查了单表，尝试关联更多相关表做联表查询\n"
-                + "- 使用更短的关键词或更宽松的匹配（如去掉限定词、用 LIKE 替代精确匹配）\n"
-                + "- 如果仍为空，请如实反馈用户";
+        StringBuilder hint = new StringBuilder(originalReport);
+        hint.append("\n\n[自动重试 ").append(retryNum).append("/2] 上一步查询返回空结果。");
+        if (retryNum < 2) {
+            hint.append("这是第").append(retryNum).append("次重试，必须换一个查询思路：\n");
+            hint.append("- 换一个工具或用不同的参数组合重新查询\n");
+            hint.append("- 使用更宽泛的条件（更短关键词、更大范围、更少过滤）\n");
+            hint.append("- 禁止输出 ask_user，必须先尝试不同的查询策略");
+        } else {
+            hint.append("已是最后一次重试机会：\n");
+            hint.append("- 如果确认无法通过任何工具获取数据，输出 ask_user 如实告知用户\n");
+            hint.append("- 如果还有未尝试的查询方式，请再试一次");
+        }
+        return hint.toString();
+    }
+
+    /**
+     * 检查工具是否真正执行过：对比 executor 执行前后的 toolCallCount。
+     */
+    private static boolean isToolActuallyExecuted(ReActAgentState state) {
+        Map<String, Object> sp = state.scratchpad();
+        if (sp == null) return false;
+        Object before = sp.get("_tool_call_count_before");
+        if (before == null) return false;
+        int beforeCount = before instanceof Number ? ((Number) before).intValue() : 0;
+        int currentCount = state.toolCallCount();
+        return currentCount > beforeCount;
+    }
+
+    /**
+     * LLM 判断用户回复是否与确认场景匹配。
+     * 如果用户换了话题/问了无关新问题 → 返回 false → replan。
+     */
+    private boolean validateUserResponse(String prompt, String response) {
+        String llmPrompt = String.format("""
+                上一个问题：%s
+                用户回复：%s
+
+                判断用户的回复是否在回答上一个问题。
+                - 如果用户在正面回答问题（选数字、给参数、确认/拒绝、追问）→ 输出 YES
+                - 如果用户完全换了话题、问了无关的新问题 → 输出 NO
+                只输出 YES 或 NO。""",
+                prompt.length() > 300 ? prompt.substring(0, 300) : prompt,
+                response.length() > 200 ? response.substring(0, 200) : response);
+        try {
+            ChatResponse resp = model.chat(List.of(
+                    SystemMessage.from("你是对话匹配判断器，只输出 YES 或 NO。"),
+                    UserMessage.from(llmPrompt)));
+            String result = resp.aiMessage().text().trim().toUpperCase();
+            log.info("Observer validation: prompt='{}', response='{}', result={}",
+                    prompt.length() > 60 ? prompt.substring(0, 60) + "..." : prompt,
+                    response.length() > 60 ? response.substring(0, 60) + "..." : response, result);
+            return result.contains("YES");
+        } catch (Exception e) {
+            log.warn("Observer: LLM validation failed, defaulting to accept", e);
+            return true;
+        }
     }
 
     /**

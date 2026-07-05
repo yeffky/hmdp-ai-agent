@@ -23,6 +23,9 @@ public class SlidingWindowManager {
     @Resource
     private CompressionConfig config;
 
+    /** 无条件硬上限：checkpoint 中最多保留的消息条数（约 50 轮对话），防止 JSON 膨胀拖慢反序列化 */
+    private static final int HARD_MESSAGE_CAP = 100;
+
     /**
      * 对当前 Agent 状态执行上下文管理。
      * 返回增量更新的 Map，LangGraph4j 会通过 Channel/Reducer 合并。
@@ -40,13 +43,31 @@ public class SlidingWindowManager {
         }
         String currentSummary = state.compressedSummary();
 
+        // ================================================================
+        // 无条件硬上限：防止 checkpoint JSON 无限膨胀导致反序列化越来越慢
+        // ================================================================
+        if (msgList.size() > HARD_MESSAGE_CAP) {
+            int trimCount = msgList.size() - HARD_MESSAGE_CAP;
+            List<Map<String, String>> trimmed = new ArrayList<>(
+                    msgList.subList(trimCount, msgList.size()));
+            updates.put("messages", trimmed);
+            log.info("Hard cap: trimmed {} messages → kept {} (max {})",
+                    trimCount, trimmed.size(), HARD_MESSAGE_CAP);
+            // 继续走压缩逻辑（用裁剪后的列表），但如果压缩关闭也到此为止
+            if (!config.isEnabled()) {
+                return updates;
+            }
+            // 用裁剪后的列表继续
+            msgList = trimmed;
+        }
+
         // 硬上限检查（压缩关闭或未触发时的兜底）
         if (!config.isEnabled() && msgList.size() > config.getMaxUncompressedMessages()) {
             int trimCount = msgList.size() - config.getMaxUncompressedMessages();
             List<Map<String, String>> trimmed = new ArrayList<>(
                     msgList.subList(trimCount, msgList.size()));
             updates.put("messages", trimmed);
-            log.debug("Hard cap: trimmed {} messages, kept {}", trimCount, trimmed.size());
+            log.debug("Hard cap (compression off): trimmed {} messages, kept {}", trimCount, trimmed.size());
             return updates;
         }
 

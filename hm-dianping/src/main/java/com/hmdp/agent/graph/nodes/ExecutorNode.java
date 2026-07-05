@@ -74,19 +74,22 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
             sb.append("\n");
         }
         sb.append("## 规则\n");
-        sb.append("- 当前步骤必须是可执行的工具调用。如果步骤内容是「告知用户」「让用户选择」「提示用户」等非工具操作，输出 ask_user 把消息传给用户，不要自行调用工具\n");
-        sb.append("- 如果上一步结果摘要中有 [自动重试] 提示，说明上次查询返回空：必须扩大搜索范围（查更多表、用更宽松匹配），不要用完全相同的参数重试\n");
-        sb.append("- 如果 [自动重试 2/2] 后仍为空，输出 ask_user 如实告知用户未找到数据，不要继续重试\n");
-        sb.append("- [必填] 参数必须全部提供，缺一不可！如果缺少必填参数，必须输出 ask_user\n");
+        sb.append("- 如果上一步结果摘要中有 [自动重试] 提示，说明上次查询返回空：必须换一个查询思路（查不同表、用更短关键词、联表查询），禁止用完全相同的参数重试，也禁止输出 ask_user\n");
+        sb.append("- 如果必填参数缺失且处于 [自动重试] 中，必须先通过扩大搜索来尝试获取参数，不得直接 ask_user\n");
+        sb.append("- [必填] 参数必须全部提供，缺一不可！如果没有 [自动重试] 提示且缺少必填参数，输出 ask_user\n");
         sb.append("- 禁止编造参数值！如果用户没有提供某个必填参数的值，且之前的工具结果中也找不到，必须输出 ask_user\n");
-        sb.append("- 参数不足时输出 {\"ask_user\": true, \"missing\": \"缺少什么参数\"}\n");
+        sb.append("- 商家类型映射：用户说的具体菜系（茶餐厅/火锅/日料/烧烤等）统统归入美食(typeId=1)，不要用菜系名去搜类型表。类型只有7个大类，详见geoSearch工具描述\n");
+        sb.append("- 写操作确认规则：如果要调用排队取号(takeQueueNumber)、取消排队(cancelMyQueue) 等写操作工具，且用户没有明确指定操作目标（如具体商铺名或ID），必须输出 ask_user 让用户选择确认，禁止自行从多个结果中挑选一个来执行。\n");
+        sb.append("- 如果 [自动重试 2/2] 后仍为空，输出 ask_user，missing 写对用户说的话（如\"抱歉，未找到相关信息\"）\n");
+        sb.append("- 当前步骤如果是「告知用户」「让用户选择」等非工具操作，输出 ask_user\n");
+        sb.append("- missing 字段是直接展示给用户的文本，禁止写入内部指令（如\"告知用户\"\"如实反馈\"等），只写用户应看到的内容\n");
+        sb.append("- 参数不足时输出 {\"ask_user\": true, \"missing\": \"用友好语言告知用户缺少什么\"}\n");
         sb.append("- 信息足够时输出 {\"tool\": \"工具名\", \"args\": {...}}\n");
         return sb.toString();
     }
 
     @Override
     public Map<String, Object> apply(ReActAgentState state) throws Exception {
-        String query = state.userQuery();
         Map<String, Object> scratchpad = state.scratchpad();
 
         // ============================================================
@@ -104,15 +107,23 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                 ? state.remainPlan() : "{}";
 
         StringBuilder prompt = new StringBuilder();
-        prompt.append("选择一个工具执行。严格遵循计划。只输出JSON: {\"tool\": \"工具名\", \"args\": {...}}\n\n");
-
-        prompt.append("用户: ").append(query).append("\n");
-        prompt.append("待执行步骤: ").append(plan).append("\n");
         String obs = state.observerReport();
-        if (obs != null && !obs.isEmpty()) {
+        boolean hasObs = obs != null && !obs.isEmpty();
+        boolean isReplan = !hasObs && (plan.contains("\"plan\"") || plan.contains("\"intent\""));
+        // replan: Planner 刚重规划并清空了 observerReport → 鼓励执行新计划
+        // retry: observerReport 含 [自动重试] → 工具规则里已要求扩大搜索，此处不加多余提示
+        // normal: 有 observerReport 不含 retry → 多步计划的后续步骤
+
+        if (isReplan) {
+            prompt.append("Planner 已重新制定了计划。请执行当前步骤。\n\n");
+        }
+        prompt.append("选择一个工具执行。只输出JSON: {\"tool\": \"工具名\", \"args\": {...}}\n\n");
+
+        prompt.append("待执行步骤: ").append(plan).append("\n");
+        if (hasObs) {
             prompt.append("上一步结果摘要: ").append(obs).append("\n");
         }
-        prompt.append("工具结果: ").append(PlannerNode.formatToolResults(scratchpad)).append("\n\n");
+        prompt.append("\n");
         prompt.append(toolSchemaPrompt);
         log.info("tool prompt:{}", prompt);
 
@@ -133,19 +144,17 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
         String toolName = extractStr(raw, "tool");
         String argsStr = extractObj(raw, "args");
 
-        // Step 2 — ask_user 检测
+        // Step 2 — ask_user 检测：全部走 checkpoint 确认流程
         if (toolName.isEmpty() || toolName.equals("ask_user")) {
             String missing = extractStr(raw, "missing");
             String question = (missing != null && !missing.isEmpty())
-                    ? "请提供以下信息：" + missing
+                    ? missing
                     : "请提供更多信息以便为您查询";
-            scratchpad.put("ask_user_missing", question);
-            log.info("Executor asks user: {}", question);
+
+            log.info("Executor: ask_user, saving checkpoint confirmation — {}", question);
             return Map.of("scratchpad", scratchpad,
-                    "errorCategory", ErrorCategory.USER_FIXABLE.name(),
-                    "retryCount", 0,
-                    "lastToolName", "",
-                    "lastToolArgs", "",
+                    "pendingConfirmation", true,
+                    "confirmationPrompt", question,
                     "finalAnswer", question,
                     "nextNode", "answer");
         }
@@ -168,31 +177,23 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
 
             String result = extractToolResult(execResult);
 
-            // Step 4 — 分类工具返回的字符串结果
-            ErrorCategory cat = ErrorClassifier.classifyToolResult(result);
-            if (cat == null) {
-                // 正常成功
-                String key = "result_" + (scratchpad.size() + 1);
-                scratchpad.put(key, result);
-                scratchpad.put("_last_tool", toolName);
-                scratchpad.put("_last_args", argsStr);
-                scratchpad.put("_last_result", result);
-                String truncated = result.length() > 200 ? result.substring(0, 200) + "..." : result;
-                log.info("Tool {} returned success, stored as {}: {}", toolName, key, truncated);
-                return Map.of("scratchpad", scratchpad,
-                        "retryCount", 0,
-                        "emptyResultRetries", 0,
-                        "errorCategory", "",
-                        "lastToolName", "",
-                        "lastToolArgs", "",
-                        "nextNode", "observer");
-            }
-
-            // 工具返回了错误字符串
-            log.warn("Tool {} returned error, category={}: {}",
-                    toolName, cat, result.length() > 120 ? result.substring(0, 120) : result);
-            scratchpad.put("error", result);
-            return handleError(state, cat, toolName, argsStr, result, scratchpad);
+            // 工具正常返回字符串 = 业务成功，写入 scratchpad
+            String key = "result_" + (scratchpad.size() + 1);
+            scratchpad.put(key, result);
+            scratchpad.put("_last_tool", toolName);
+            scratchpad.put("_last_args", argsStr);
+            scratchpad.put("_last_result", result);
+            String truncated = result.length() > 200 ? result.substring(0, 200) + "..." : result;
+            log.info("Tool {} completed, stored as {}: {}", toolName, key, truncated);
+            int newCallCount = state.toolCallCount() + 1;
+            scratchpad.put("_tool_call_count_before", state.toolCallCount());
+            return Map.of("scratchpad", scratchpad,
+                    "toolCallCount", newCallCount,
+                    "retryCount", 0,
+                    "errorCategory", "",
+                    "lastToolName", "",
+                    "lastToolArgs", "",
+                    "nextNode", "observer");
 
         } catch (Exception e) {
             log.error("Tool execution threw exception for {}", toolName, e);
@@ -231,30 +232,24 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
             ).get();
 
             String result = extractToolResult(execResult);
-            ErrorCategory cat = ErrorClassifier.classifyToolResult(result);
 
-            if (cat == null) {
-                // 重试成功
-                String key = "result_" + (scratchpad.size() + 1);
-                scratchpad.put(key, result);
-                scratchpad.put("_last_tool", toolName);
-                scratchpad.put("_last_args", argsStr);
-                scratchpad.put("_last_result", result);
-                log.info("Retry succeeded for tool {}, stored as {}: {}",
-                        toolName, key, result.length() > 200 ? result.substring(0, 200) + "..." : result);
-                return Map.of("scratchpad", scratchpad,
-                        "retryCount", 0,
-                        "emptyResultRetries", 0,
-                        "errorCategory", "",
-                        "lastToolName", "",
-                        "lastToolArgs", "",
-                        "nextNode", "observer");
-            }
-
-            // 重试后依然失败 → 重新分类（可能转为 FATAL）
-            log.warn("Retry still failed for tool {}, category={}", toolName, cat);
-            scratchpad.put("error", result);
-            return handleError(state, cat, toolName, argsStr, result, scratchpad);
+            // 重试成功
+            String key = "result_" + (scratchpad.size() + 1);
+            scratchpad.put(key, result);
+            scratchpad.put("_last_tool", toolName);
+            scratchpad.put("_last_args", argsStr);
+            scratchpad.put("_last_result", result);
+            log.info("Retry succeeded for tool {}, stored as {}: {}",
+                    toolName, key, result.length() > 200 ? result.substring(0, 200) + "..." : result);
+            int newCallCount = state.toolCallCount() + 1;
+            scratchpad.put("_tool_call_count_before", state.toolCallCount());
+            return Map.of("scratchpad", scratchpad,
+                    "toolCallCount", newCallCount,
+                    "retryCount", 0,
+                    "errorCategory", "",
+                    "lastToolName", "",
+                    "lastToolArgs", "",
+                    "nextNode", "observer");
 
         } catch (Exception e) {
             log.error("Retry threw exception for {}", toolName, e);
@@ -304,9 +299,6 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
         }
     }
 
-    // ============================================================
-    // 统一错误路由
-    // ============================================================
     private Map<String, Object> handleError(
             ReActAgentState state, ErrorCategory cat,
             String toolName, String toolArgs, String errorDetail,
@@ -334,7 +326,7 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                 );
             }
             case USER_FIXABLE -> {
-                log.info("Error categorized as USER_FIXABLE for tool {}", toolName);
+                log.info("Error categorized as USER_FIXABLE for tool {}, routing to judgeNode", toolName);
                 String ctx = buildErrorContext(state, toolName, errorDetail, "USER_FIXABLE");
                 scratchpad.put("ask_user_missing", errorDetail);
                 yield Map.of(
@@ -344,8 +336,7 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                         "retryCount", 0,
                         "lastToolName", "",
                         "lastToolArgs", "",
-                        "finalAnswer", "__ERROR__",
-                        "nextNode", "answer"
+                        "nextNode", "judgeNode"
                 );
             }
             case FATAL -> {
@@ -425,9 +416,8 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
     }
 
     /**
-     * 从 Command 中提取纯净的工具执行结果文本。
-     * 避免 ToolExecutionResultMessage 包装类的 toString（含 id、contents 等噪音）
-     * 污染 scratchpad，导致后续 LLM 调用时关键字段被噪声淹没。
+     * 从 Command 中提取工具执行结果文本。
+     * 如果 langchain4j 捕获了工具抛出的异常并将其包装为 error content，则重新抛出。
      */
     private String extractToolResult(Command command) {
         if (command == null || command.update() == null) {
@@ -437,6 +427,12 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
         if (val instanceof java.util.List<?> list && !list.isEmpty()) {
             Object last = list.get(list.size() - 1);
             if (last instanceof ToolExecutionResultMessage msg) {
+                // 检测 langchain4j 包装的工具异常，重新抛出以触发 ExecutorNode 的错误路由
+                if (Boolean.TRUE.equals(msg.isError())) {
+                    throw new com.hmdp.agent.graph.error.ToolException(
+                            msg.toolName() != null ? msg.toolName() : "unknown",
+                            msg.text());
+                }
                 return msg.contents().stream()
                         .filter(c -> c instanceof TextContent)
                         .map(c -> ((TextContent) c).text())

@@ -104,10 +104,12 @@ public class ChatRagController {
 
             Optional<ReActAgentState> result = reactGraph.invoke(init, config);
             String answer;
+            boolean answerFromStreaming = false;
             if (result.isPresent()) {
                 ReActAgentState state = result.get();
                 if ("__STREAMING__".equals(state.finalAnswer())) {
                     answer = generateSyncAnswer(state);
+                    answerFromStreaming = true;
                 } else {
                     answer = state.finalAnswer() != null
                             ? state.finalAnswer()
@@ -117,13 +119,24 @@ public class ChatRagController {
                 answer = "系统处理完成，但未生成回答。";
             }
 
-            try {
-                if (request.getMessage() != null && !request.getMessage().isEmpty()
-                        && answer != null && !answer.isEmpty()) {
+            // Persist Q&A: MySQL (for history API) + checkpoint (for context accumulation)
+            if (request.getMessage() != null && !request.getMessage().isEmpty()
+                    && answer != null && !answer.isEmpty()) {
+                try {
                     chatHistoryRepo.saveRound(userId, request.getMessage(), answer);
+                } catch (Exception e) {
+                    log.error("Failed to persist chat round for user {}: {}", userId, e.getMessage());
                 }
-            } catch (Exception e) {
-                log.error("Failed to persist chat round for user {}: {}", userId, e.getMessage());
+                if (answerFromStreaming) {
+                    // AnswerNode didn't add messages to state — do it here
+                    try {
+                        reactGraph.updateState(config, Map.of("messages",
+                                List.of(ReActAgentState.userMsg(request.getMessage()),
+                                        ReActAgentState.aiMsg(answer))));
+                    } catch (Exception e) {
+                        log.error("Failed to update checkpoint for user {}: {}", userId, e.getMessage());
+                    }
+                }
             }
 
             log.info("ReAct complete: threadId={}, messages={}",

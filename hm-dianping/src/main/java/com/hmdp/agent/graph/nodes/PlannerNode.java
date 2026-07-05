@@ -33,6 +33,7 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
     private final String toolListBlock;
     private final String toolNamesBlock;
 
+
     public PlannerNode(OpenAiChatModel model, int maxIterations, LC4jToolService toolService) {
         this.model = model;
         this.maxIterations = maxIterations;
@@ -54,6 +55,28 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
         boolean isReplan = (observerReport != null && !observerReport.isEmpty())
                 || (feedback != null && !feedback.isEmpty());
 
+        // ============================================================
+        // 重规划次数限制：最多 1 次 replan，超出后基于已有信息生成回答
+        // ============================================================
+        if (isReplan && state.replanCount() >= 1) {
+            log.warn("Planner: replan limit reached ({}), routing to answer with context", state.replanCount());
+            String judgeReason = feedback != null && !feedback.isEmpty() ? feedback : "未找到足够信息";
+            StringBuilder limitPrompt = new StringBuilder();
+            limitPrompt.append(state.contextBlock()).append("\n");
+            limitPrompt.append("## 用户问题\n").append(query).append("\n\n");
+            limitPrompt.append("## 已执行的计划\n").append(state.planJson()).append("\n\n");
+            limitPrompt.append("## 收集到的数据\n").append(formatToolResults(state.scratchpad())).append("\n\n");
+            limitPrompt.append("## 最终判断\n").append(judgeReason).append("\n\n");
+            limitPrompt.append("请基于以上信息生成回答。要求：\n");
+            limitPrompt.append("- 坦诚告知用户查询结果，说明查询范围和尝试的方式\n");
+            limitPrompt.append("- 给出具体建议帮助用户下一步操作（如扩大范围、换个关键词、提供更多信息等）\n");
+            limitPrompt.append("- 禁止暴露内部ID、SQL、表名、工具名等技术细节\n");
+            return Map.of("iteration", iter,
+                    "streamingPrompt", limitPrompt.toString(),
+                    "finalAnswer", "__STREAMING__",
+                    "nextNode", "answer");
+        }
+
         StringBuilder prompt = new StringBuilder();
         prompt.append(state.contextBlock());
         prompt.append("\n");
@@ -72,8 +95,10 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
             prompt.append("- 不要重复原始计划中已失败的步骤，换一个查询思路\n");
             prompt.append("- 例如：如果之前只查了单表，考虑联表；如果之前用精确匹配，改用模糊匹配\n");
             prompt.append("- 如果确实无法通过任何工具获取所需数据，输出 ask_user\n");
+            prompt.append("- 如果所有工具都无法满足用户需求（即使换思路也不行），输出 cannot_fulfill\n");
             prompt.append("- 输出JSON：{\"intent\":\"用户意图\",\"complex\":true,\"plan\":[\"第1步：...\",\"第2步：...\"]}\n");
-            prompt.append("- 或：{\"ask_user\": \"需要用户提供什么信息\"}\n\n");
+            prompt.append("- 或：{\"ask_user\": \"需要用户提供什么信息\"}\n");
+            prompt.append("- 或：{\"cannot_fulfill\": \"坦诚说明限制并给出替代建议\"}\n\n");
             prompt.append(toolListBlock).append("\n");
         } else {
             // ============================================================
@@ -81,10 +106,27 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
             // ============================================================
             prompt.append("## 当前请求\n用户: ").append(query).append("\n");
             prompt.append("已有数据: ").append(formatToolResults(state.scratchpad())).append("\n\n");
-            prompt.append("分析用户意图并制定计划。输出JSON：\n");
-            prompt.append("简单问题：{\"intent\":\"用户意图一句话\",\"complex\":false}\n");
-            prompt.append("需要工具：{\"intent\":\"用户意图\",\"complex\":true,\"plan\":[\"第1步：用X工具做Y，因为Z\",\"第2步：...\"]}\n");
-            prompt.append("缺少用户信息且无法通过工具获取（如地理位置、登录凭证）：{\"ask_user\": \"需要补充什么信息\"}\n\n");
+            prompt.append("分析用户意图并制定计划。输出JSON：\n\n");
+            prompt.append("简单问题（无需查询数据，LLM 自身知识即可回答）：\n");
+            prompt.append("{\"intent\":\"用户意图一句话\",\"complex\":false}\n");
+            prompt.append("适用场景：问候、闲聊、自我介绍、感谢、道别、常识问答、建议咨询等\n\n");
+            prompt.append("需要查询数据（必须调用工具才能获取信息）：\n");
+            prompt.append("{\"intent\":\"用户意图\",\"complex\":true,\"plan\":[\"第1步：用X工具做Y，因为Z\",\"第2步：...\"]}\n");
+            prompt.append("适用场景：查店铺、搜商品、查订单、看评价、排队取号等需要数据库/外部数据的请求\n\n");
+            prompt.append("历史回溯（用户提及上下文窗口中不存在的历史对话）：\n");
+            prompt.append("{\"intent\":\"历史回溯\",\"complex\":true,\"plan\":[\"第1步：用 searchHistory 搜索关键词X、Y、Z\"]}\n");
+            prompt.append("适用场景：用户说「上次我们聊过」「之前推荐的」「还记得我问过」等引用历史对话但窗口中没有相关内容时。\n");
+            prompt.append("从用户消息中提取关键词（名词、实体、话题），用 searchHistory 工具检索。\n\n");
+            prompt.append("缺少用户信息且无法通过工具获取（如地理位置、登录凭证）：\n");
+            prompt.append("{\"ask_user\": \"需要补充什么信息\"}\n\n");
+            prompt.append("超出能力范围（用户直接要求执行一个操作，且没有任何工具能做到）：\n");
+            prompt.append("{\"cannot_fulfill\": \"坦诚说明目前做不到，并给出替代建议或告知后续可能会支持\"}\n");
+            prompt.append("适用场景：「帮我领取优惠券」「帮我把订单退了」「帮我改一下收货地址」——用户要求 agent 代为执行某个动作。\n");
+            prompt.append("判断标准：逐一检查每个可用工具的能力，如果所有工具都与用户需求无关，则输出 cannot_fulfill。\n");
+            prompt.append("关键区分——知识问题 VS 操作请求：\n");
+            prompt.append("  - 「怎么领取优惠券？」「如何退款？」→ 这是知识问题，应调用 knowledgeRetrieval 查询知识库，不要输出 cannot_fulfill\n");
+            prompt.append("  - 「帮我领取优惠券」「帮我把这个订单退掉」→ 这是操作请求，工具做不到才输出 cannot_fulfill\n");
+            prompt.append("  - 总结：用户问「怎么」「如何」「什么是」开头的是知识问题，用工具查；用户用「帮我」「给我」开头的是操作请求，判断工具能力。\n\n");
             prompt.append(toolListBlock).append("\n");
         }
 
@@ -92,7 +134,7 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
             String promptStr = prompt.toString();
             log.info("Planner prompt (iter {}, replan={}):\n{}", iter, isReplan, promptStr);
             ChatResponse resp = model.chat(List.of(
-                    SystemMessage.from("你是任务规划器。只输出JSON。如果是重规划，必须换思路不重复失败路径。"),
+                    SystemMessage.from("你是任务规划器。只输出JSON。先区分用户是「操作请求」（帮我做X）还是「知识问题」（怎么/如何/什么是X）。操作请求超出工具能力才输出cannot_fulfill；知识问题一律用knowledgeRetrieval工具查询。问候/闲聊/常识/建议等无需查数据的问题设为complex=false直接回答。只有确实需要数据库或外部数据且工具有能力时才设complex=true。重规划时必须换思路不重复失败路径。"),
                     UserMessage.from(promptStr)));
             String raw = resp.aiMessage().text();
             log.info("Planner (iter {}): {}", iter, raw);
@@ -101,13 +143,30 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
             result.put("iteration", iter);
             result.put("planJson", raw);
 
-            if (raw.contains("\"ask_user\"")) {
+            boolean isSimple = raw.contains("\"complex\"") && raw.contains("false");
+            boolean askUser = raw.contains("\"ask_user\"");
+            boolean cannotFulfill = raw.contains("\"cannot_fulfill\"");
+
+            if (cannotFulfill) {
+                String msg = extractJsonStr(raw, "cannot_fulfill");
+                result.put("finalAnswer", msg != null ? msg : "抱歉，我目前无法完成这个操作。");
+                result.put("nextNode", "answer");
+                log.info("Planner: cannot_fulfill detected, routing to answer: {}", msg);
+            } else if (askUser) {
                 String askMsg = extractJsonStr(raw, "ask_user");
                 result.put("finalAnswer", askMsg != null ? askMsg : "请提供更多信息");
+                result.put("nextNode", "answer");
+            } else if (isSimple) {
+                // 闲聊、问候、自我介绍等无需工具的问题 → 直接回答
+                log.info("Planner: simple intent detected, routing to answer");
                 result.put("nextNode", "answer");
             } else {
                 result.put("nextNode", "executor");
                 result.put("remainPlan", raw);
+                if (isReplan) {
+                    result.put("observerReport", "");
+                    result.put("replanCount", state.replanCount() + 1);
+                }
             }
             return result;
         } catch (Exception e) {
@@ -166,6 +225,10 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
         sb.append("- 制定计划前，先检查工具所需的 [必填] 参数。如果用户未提供，计划中必须包含获取该参数的步骤。\n");
         sb.append("- 例如：用户给的是商铺名称但工具需要 shopId → 计划中必须先查询商铺ID。\n");
         sb.append("- 如果 [必填] 参数无法通过任何工具获取（如用户地理位置坐标、登录凭证），第一步必须输出 ask_user 向用户索要，不要规划无法执行的步骤。\n");
+        sb.append("- 商家类型映射：geoSearch 的 typeId 是7个大类（1美食/2KTV/3酒店/4酒吧/5咖啡厅/6电影院/7足疗按摩）。用户说的「茶餐厅」「火锅」等具体菜系统统归入美食(typeId=1)，不要规划「查询茶餐厅类型ID」这种步骤，直接用 typeId=1。\n");
+        sb.append("- 写操作确认规则：排队取号(takeQueueNumber)、取消排队(cancelMyQueue) 等写操作必须由用户明确指定目标后才能执行。如果用户没有指定具体商铺，计划中必须先查询并列出选项，最后一步用 ask_user 让用户选择，禁止代用户决定。\n");
+        sb.append("- 步骤数量限制：每个计划最多 5 步。复杂任务请优先合并步骤（如同时查多个条件），不要拆成过多小步骤。\n");
+        sb.append("- 大结果集防护：用户问「所有」「全部」「哪些」等可能返回大量数据的查询时，工具会自动限制返回 20 条并提示总数。如果总数超过 20，你必须在下一步让用户缩小范围（如加条件、选区域、选类型），禁止逐条遍历全部结果。\n");
         return sb.toString();
     }
 

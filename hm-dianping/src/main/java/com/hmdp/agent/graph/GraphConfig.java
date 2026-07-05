@@ -14,6 +14,7 @@ import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphDefinition;
 import org.bsc.langgraph4j.StateGraph;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
+import com.hmdp.agent.graph.checkpoint.DeltaPostgresSaver;
 import org.bsc.langgraph4j.checkpoint.BaseCheckpointSaver;
 import org.bsc.langgraph4j.checkpoint.PostgresSaver;
 import org.bsc.langgraph4j.serializer.StateSerializer;
@@ -96,38 +97,45 @@ public class GraphConfig {
                 s -> CompletableFuture.completedFuture(
                         s.nextNode() != null ? s.nextNode() : "executor"),
                 Map.of("executor", "executor",
-                        "answer", "answer"));
+                        "answer", "answer",
+                        "planner", "planner"));
 
-        // executor 三路条件路由：observer（正常）/ retryGate（可重试）/ answer（用户修正或致命）
+        // executor 条件路由：observer（正常）/ retryGate（可重试）/ judgeNode（参数缺失等）/ answer（致命）
         graph.addConditionalEdges("executor",
                 s -> CompletableFuture.completedFuture(
                         s.nextNode() != null ? s.nextNode() : "observer"),
                 Map.of("observer", "observer",
                         "retryGate", "retryGate",
-                        "answer", "answer"));
+                        "judgeNode", "judgeNode",
+                        "answer", "answer",
+                        "executor", "executor"));
 
         // retryGate 条件路由：executor（继续重试）/ answer（重试耗尽）
         graph.addConditionalEdges("retryGate",
                 s -> CompletableFuture.completedFuture(
                         s.nextNode() != null ? s.nextNode() : "answer"),
                 Map.of("executor", "executor",
-                        "answer", "answer"));
+                        "answer", "answer",
+                        "retryGate", "retryGate"));
 
         // observer 四路路由：executor（继续执行）/ judgeNode（判断充分性）/ retryGate（错误重试）/ answer（透传）
+        // observer 自环：用于 checkpoint resume 时直接回到 observer 自身
         graph.addConditionalEdges("observer",
                 s -> CompletableFuture.completedFuture(
                         s.nextNode() != null ? s.nextNode() : "judgeNode"),
                 Map.of("executor", "executor",
                         "judgeNode", "judgeNode",
                         "retryGate", "retryGate",
-                        "answer", "answer"));
+                        "answer", "answer",
+                        "observer", "observer"));
 
         // judgeNode 两路路由：answer（充分/需用户补充）/ planner（不足，重新规划）
         graph.addConditionalEdges("judgeNode",
                 s -> CompletableFuture.completedFuture(
                         s.nextNode() != null ? s.nextNode() : "answer"),
                 Map.of("answer", "answer",
-                        "planner", "planner"));
+                        "planner", "planner",
+                        "judgeNode", "judgeNode"));
 
         graph.addEdge("answer", GraphDefinition.END);
 
@@ -143,12 +151,12 @@ public class GraphConfig {
     }
 
     private BaseCheckpointSaver createCheckpointSaver(StateSerializer<ReActAgentState> serializer) throws Exception {
-        PostgresSaver saver = PostgresSaver.builder()
+        PostgresSaver.Builder builder = PostgresSaver.builder()
                 .datasource(postgresDataSource)
                 .stateSerializer(serializer)
-                .createTables(true)
-                .build();
-        log.info("Using PostgresSaver — shared checkpoint across all instances");
+                .createTables(true);
+        DeltaPostgresSaver saver = new DeltaPostgresSaver(builder, serializer);
+        log.info("Using DeltaPostgresSaver — delta storage at {} snapshot_frequency", 5);
         return saver;
     }
 }

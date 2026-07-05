@@ -223,14 +223,18 @@
               }
               break;
             case 'answer':
-              // 不替换逐字流式消息 — 把 assistant_streaming 就地转为 assistant（去掉光标即可）
               flushTokenQueue();
+              var found = false;
               for (var j = self.messages.length - 1; j >= pendingStartIndex; j--) {
                 if (self.messages[j].role === 'assistant_streaming') {
-                  var finalContent = self.messages[j].content;
-                  self.messages.splice(j, 1, { role: 'assistant', content: finalContent });
+                  self.messages.splice(j, 1, { role: 'assistant', content: self.messages[j].content });
+                  found = true;
                   break;
                 }
+              }
+              if (!found && data.content) {
+                // 预设回答（ask_user / error），无 streaming 过程，直接展示
+                self.messages.push({ role: 'assistant', content: data.content });
               }
               break;
           }

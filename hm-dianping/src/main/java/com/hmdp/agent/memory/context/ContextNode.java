@@ -29,7 +29,7 @@ public class ContextNode implements NodeAction<ReActAgentState> {
     private final UserStore userStore;
     private final ChatHistoryRepository chatHistoryRepo;
 
-    private static final int MAX_CONTEXT_ROUNDS = 10;
+    private static final int MAX_CONTEXT_ROUNDS = 3;
 
     private static final String SYSTEM_RULES = """
             ## 核心规则
@@ -50,19 +50,26 @@ public class ContextNode implements NodeAction<ReActAgentState> {
 
     @Override
     public Map<String, Object> apply(ReActAgentState state) throws Exception {
+        long t0 = System.currentTimeMillis();
         log.debug("ContextNode: building context for session {}", state.sessionId());
 
         // 1. 滑动窗口压缩
         Map<String, Object> updates = new LinkedHashMap<>(windowManager.manageContext(state));
+        log.info("ContextNode: sliding window done in {} ms, messages={}",
+                System.currentTimeMillis() - t0, state.messages().size());
 
         // 2. 构建结构化上下文块
+        long t1 = System.currentTimeMillis();
         String contextBlock = buildContextBlock(state);
         updates.put("contextBlock", contextBlock);
+        log.info("ContextNode: context block built in {} ms ({} chars)",
+                System.currentTimeMillis() - t1, contextBlock.length());
 
         // 3. 确保路由到 planner
         if (!updates.containsKey("nextNode")) {
             updates.put("nextNode", "planner");
         }
+        log.info("ContextNode: total {} ms", System.currentTimeMillis() - t0);
         return updates;
     }
 
@@ -87,12 +94,29 @@ public class ContextNode implements NodeAction<ReActAgentState> {
             sb.append("\n## 历史记忆\n").append(summary).append("\n");
         }
 
-        // --- 对话历史（从 PostgreSQL tb_chat_history 加载最近 N 轮） ---
-        if (userId != null && chatHistoryRepo != null) {
+        // --- 对话历史（优先从 checkpoint state.messages() 读取，不足时用 MySQL 补充） ---
+        List<Map<String, String>> stateMsgs = state.messages();
+        if (!stateMsgs.isEmpty()) {
+            sb.append("\n## 对话历史\n");
+            int maxPairs = Math.min(stateMsgs.size() / 2, MAX_CONTEXT_ROUNDS);
+            int start = Math.max(0, stateMsgs.size() - maxPairs * 2);
+            for (int i = start; i < stateMsgs.size(); i++) {
+                Map<String, String> m = stateMsgs.get(i);
+                String role = m.get("role");
+                String content = m.get("content");
+                if (content != null && content.length() > 300)
+                    content = content.substring(0, 300) + "...";
+                if ("user".equals(role)) {
+                    sb.append("user: ").append(content).append("\n");
+                } else if ("assistant".equals(role)) {
+                    sb.append("assistant: ").append(content).append("\n");
+                }
+            }
+        } else if (userId != null && chatHistoryRepo != null) {
+            // checkpoint 无消息时回退到 MySQL（迁移期兼容）
             List<ChatHistoryRound> rounds = chatHistoryRepo.findRounds(userId, null, MAX_CONTEXT_ROUNDS);
             if (!rounds.isEmpty()) {
                 sb.append("\n## 对话历史\n");
-                // findRounds returns DESC (newest first), reverse to chronological
                 for (int i = rounds.size() - 1; i >= 0; i--) {
                     ChatHistoryRound r = rounds.get(i);
                     String userMsg = r.getUserMessage();

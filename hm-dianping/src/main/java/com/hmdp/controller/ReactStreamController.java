@@ -52,7 +52,7 @@ public class ReactStreamController {
     @PostMapping(value = "/react/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamReact(@RequestBody Map<String, String> request,
                                   HttpServletRequest httpRequest) {
-        SseEmitter emitter = new SseEmitter(120_000L);
+        SseEmitter emitter = new SseEmitter(300_000L);
 
         String message = request.get("message");
         if (message == null || message.trim().isEmpty()) {
@@ -62,6 +62,10 @@ public class ReactStreamController {
 
         Long userId = resolveUserIdFromRedis(httpRequest);
         log.info("ReactStreamController: resolved userId={} from Redis", userId);
+
+        emitter.onTimeout(() -> log.warn("SSE timeout after 300s for userId={}", userId));
+        emitter.onError(e -> log.warn("SSE error for userId={}: {}", userId, e.getMessage()));
+        emitter.onCompletion(() -> log.debug("SSE completed for userId={}", userId));
 
         // 立即发送 SSE comment 事件，冲开代理/容器的 response buffer，
         // 确保后续 token 实时到达前端，避免被缓冲为一整块
@@ -81,96 +85,155 @@ public class ReactStreamController {
 
                 String threadId = "user:" + userId;
                 RunnableConfig config = RunnableConfig.builder().threadId(threadId).build();
-                Map<String, Object> init = buildInit(threadId, message, userId);
+
+                // ============================================================
+                // 确认恢复：检测是否有待确认的 checkpoint，有则将用户回复注入并跳到 observer
+                // ============================================================
+                boolean resumed = false;
+                try {
+                    var snapshotOpt = reactGraph.stateOf(config);
+                    if (snapshotOpt.isPresent()) {
+                        ReActAgentState lastState = snapshotOpt.get().state();
+                        if (lastState.pendingConfirmation()) {
+                            log.info("Resuming from confirmation checkpoint: threadId={}, userChoice={}",
+                                    threadId, message);
+                            reactGraph.updateState(config, Map.of(
+                                    "userChoice", message,
+                                    "pendingConfirmation", false,
+                                    "nextNode", "observer"
+                            ), "observer");
+                            resumed = true;
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to check/resume confirmation checkpoint for {}: {}",
+                            threadId, e.getMessage());
+                }
+
+                Map<String, Object> init;
+                if (resumed) {
+                    init = null;  // null → GraphInput.resume() → resume from checkpoint
+                } else {
+                    init = buildInit(threadId, message, userId);
+                }
+
+                long t0 = System.currentTimeMillis();
                 AsyncGenerator<NodeOutput<ReActAgentState>> stream =
                         reactGraph.stream(init, config);
+                log.info("Graph stream init took {} ms for {}", System.currentTimeMillis() - t0, threadId);
 
                 ReActAgentState[] lastState = {null};
 
-                stream.iterator().forEachRemaining(output -> {
-                    try {
-                        lastState[0] = output.state();
-                        String node = output.node();
-                        Map<String, Object> event = new LinkedHashMap<>();
-                        event.put("node", node);
+                try {
+                    stream.iterator().forEachRemaining(output -> {
+                        try {
+                            lastState[0] = output.state();
+                            String node = output.node();
 
-                        switch (node) {
-                            case "context":
-                                event.put("type", "thinking");
-                                event.put("content", "正在整理上下文...");
-                                break;
-                            case "planner":
-                                event.put("type", "thinking");
-                                String planJson = lastState[0].planJson();
-                                event.put("content", planSummary(planJson));
-                                event.put("plan", planJson);
-                                break;
-                            case "executor":
-                                Map<String, Object> sp = lastState[0].scratchpad();
-                                String lastTool = (String) sp.get("_last_tool");
-                                String lastResult = (String) sp.get("_last_result");
-                                if (lastTool != null) {
-                                    event.put("type", "tool");
-                                    event.put("toolName", lastTool);
-                                    event.put("scratchpad", sp);
-                                    if (lastResult != null) {
-                                        event.put("toolResult", lastResult.length() > 500
-                                                ? lastResult.substring(0, 500) + "..." : lastResult);
-                                        event.put("content", "调用 " + lastTool + " 获取信息");
+                            if ("context".equals(node)) {
+                                log.info("First node (context) reached after {} ms from stream init",
+                                        System.currentTimeMillis() - t0);
+                            }
+                            Map<String, Object> event = new LinkedHashMap<>();
+                            event.put("node", node);
+
+                            switch (node) {
+                                case "context":
+                                    event.put("type", "thinking");
+                                    event.put("content", "正在整理上下文...");
+                                    break;
+                                case "planner":
+                                    event.put("type", "thinking");
+                                    String planJson = lastState[0].planJson();
+                                    event.put("content", planSummary(planJson));
+                                    event.put("plan", planJson);
+                                    break;
+                                case "executor":
+                                    Map<String, Object> sp = lastState[0].scratchpad();
+                                    String lastTool = (String) sp.get("_last_tool");
+                                    String lastResult = (String) sp.get("_last_result");
+                                    if (lastTool != null) {
+                                        event.put("type", "tool");
+                                        event.put("toolName", lastTool);
+                                        event.put("scratchpad", sp);
+                                        if (lastResult != null) {
+                                            event.put("toolResult", lastResult.length() > 500
+                                                    ? lastResult.substring(0, 500) + "..." : lastResult);
+                                            event.put("content", "调用 " + lastTool + " 获取信息");
+                                        } else {
+                                            event.put("content", "正在调用 " + lastTool + "...");
+                                        }
                                     } else {
-                                        event.put("content", "正在调用 " + lastTool + "...");
+                                        event.put("type", "thinking");
+                                        event.put("content", "正在调用工具获取信息...");
                                     }
-                                } else {
+                                    break;
+                                case "retryGate":
+                                    event.put("type", "retry");
+                                    event.put("content", "工具执行遇到临时问题，正在进行第 " +
+                                        lastState[0].retryCount() + " 次重试...");
+                                    event.put("retryCount", lastState[0].retryCount());
+                                    event.put("tool", lastState[0].lastToolName());
+                                    break;
+                                case "observer":
                                     event.put("type", "thinking");
-                                    event.put("content", "正在调用工具获取信息...");
-                                }
-                                break;
-                            case "retryGate":
-                                event.put("type", "retry");
-                                event.put("content", "工具执行遇到临时问题，正在进行第 " +
-                                    lastState[0].retryCount() + " 次重试...");
-                                event.put("retryCount", lastState[0].retryCount());
-                                event.put("tool", lastState[0].lastToolName());
-                                break;
-                            case "observer":
-                                event.put("type", "thinking");
-                                String obsNext = lastState[0].nextNode();
-                                event.put("nextNode", obsNext);
-                                if ("answer".equals(obsNext)) {
-                                    event.put("content", "信息收集完毕，正在生成回答...");
-                                } else {
-                                    event.put("content", "工具结果分析完成，正在判断信息是否充足...");
-                                }
-                                break;
-                            case "answer":
-                                String answer = lastState[0].finalAnswer();
-                                if ("__STREAMING__".equals(answer)) {
-                                    event.put("type", "thinking");
-                                    event.put("content", "正在生成回答...");
-                                } else if (answer != null && !answer.isEmpty()) {
-                                    event.put("type", "answer");
-                                    event.put("content", answer);
-                                } else {
-                                    event.put("type", "thinking");
-                                    event.put("content", "正在生成回答...");
-                                }
-                                break;
-                        }
+                                    String obsNext = lastState[0].nextNode();
+                                    event.put("nextNode", obsNext);
+                                    if ("answer".equals(obsNext)) {
+                                        event.put("content", "信息收集完毕，正在生成回答...");
+                                    } else {
+                                        event.put("content", "工具结果分析完成，正在判断信息是否充足...");
+                                    }
+                                    break;
+                                case "answer":
+                                    String answer = lastState[0].finalAnswer();
+                                    if ("__STREAMING__".equals(answer)) {
+                                        event.put("type", "thinking");
+                                        event.put("content", "正在生成回答...");
+                                    } else {
+                                        event.put("type", "thinking");
+                                        event.put("content", "正在整理回答...");
+                                    }
+                                    break;
+                            }
 
-                        emitter.send(SseEmitter.event()
-                                .name("step")
-                                .data(event));
-                    } catch (IOException e) {
-                        log.debug("SSE send failed (client disconnected): {}", e.getMessage());
+                            emitter.send(SseEmitter.event()
+                                    .name("step")
+                                    .data(event));
+                        } catch (Exception e) {
+                            log.debug("SSE send failed: {}", e.getMessage());
+                        }
+                    });
+                } catch (Exception iterEx) {
+                    log.warn("Graph iteration aborted, generating fallback: {}", iterEx.getMessage());
+                    if (lastState[0] == null) {
+                        try {
+                            var snap = reactGraph.stateOf(config);
+                            if (snap.isPresent()) lastState[0] = snap.get().state();
+                        } catch (Exception ignored) {}
                     }
-                });
+                    if (lastState[0] != null) {
+                        String fallback = buildFallbackAnswer(lastState[0]);
+                        for (int i = 0; i < fallback.length(); i++) {
+                            emitter.send(SseEmitter.event().name("step").data(Map.of(
+                                    "type", "answer_chunk", "content", String.valueOf(fallback.charAt(i)))));
+                        }
+                        emitter.send(SseEmitter.event().name("step").data(Map.of(
+                                "type", "answer", "content", fallback)));
+                        persistRound(userId, lastState[0].userQuery(), fallback);
+                        emitter.send(SseEmitter.event().name("done").data("{}"));
+                        emitter.complete();
+                        return;
+                    }
+                    throw iterEx;
+                }
 
                 // After graph completes, handle streaming or preset answer
                 if (lastState[0] != null) {
                     String finalAnswer = lastState[0].finalAnswer();
 
                     if ("__STREAMING__".equals(finalAnswer)) {
-                        doStreamingAnswer(lastState[0], emitter, userId);
+                        doStreamingAnswer(lastState[0], emitter, userId, config);
                     } else {
                         finishPresetAnswer(lastState[0], emitter, userId);
                     }
@@ -188,12 +251,15 @@ public class ReactStreamController {
     }
 
     /** True token-by-token streaming via OpenAiStreamingChatModel + StreamingChatResponseHandler */
-    private void doStreamingAnswer(ReActAgentState state, SseEmitter emitter, Long userId) {
+    private void doStreamingAnswer(ReActAgentState state, SseEmitter emitter, Long userId,
+                                    RunnableConfig config) {
         String prompt = state.streamingPrompt();
         if (prompt == null || prompt.isEmpty()) {
             completeWithError(emitter, "生成回答失败");
             return;
         }
+
+        String query = state.userQuery();
 
         try {
             StringBuilder fullAnswer = new StringBuilder();
@@ -234,7 +300,8 @@ public class ReactStreamController {
                                 event.put("content", answer);
                                 emitter.send(SseEmitter.event().name("step").data(event));
 
-                                persistRound(userId, state.userQuery(), answer);
+                                persistRound(userId, query, answer);
+                                appendRoundToCheckpoint(config, query, answer);
                                 emitter.send(SseEmitter.event().name("done").data("{}"));
                                 emitter.complete();
                             } catch (IOException e) {
@@ -255,7 +322,8 @@ public class ReactStreamController {
                                 event.put("type", "answer");
                                 event.put("content", answer);
                                 emitter.send(SseEmitter.event().name("step").data(event));
-                                persistRound(userId, state.userQuery(), answer);
+                                persistRound(userId, query, answer);
+                                appendRoundToCheckpoint(config, query, answer);
                                 emitter.send(SseEmitter.event().name("done").data("{}"));
                                 emitter.complete();
                             } catch (Exception e) {
@@ -273,12 +341,40 @@ public class ReactStreamController {
         try {
             String answer = state.finalAnswer();
             if (answer != null && !answer.isEmpty()) {
+                // 模拟流式发送，统一走 answer_chunk → answer 管线，前端只需一套渲染逻辑
+                for (int i = 0; i < answer.length(); i++) {
+                    Map<String, Object> chunk = new LinkedHashMap<>();
+                    chunk.put("type", "answer_chunk");
+                    chunk.put("content", String.valueOf(answer.charAt(i)));
+                    emitter.send(SseEmitter.event().name("step").data(chunk));
+                }
+                Map<String, Object> finalEvent = new LinkedHashMap<>();
+                finalEvent.put("type", "answer");
+                finalEvent.put("content", answer);
+                emitter.send(SseEmitter.event().name("step").data(finalEvent));
+                // Both AnswerNode (checkpoint messages) and persistRound (MySQL) handle persistence
                 persistRound(userId, state.userQuery(), answer);
             }
             emitter.send(SseEmitter.event().name("done").data("{}"));
             emitter.complete();
         } catch (IOException e) {
             log.debug("SSE done send failed");
+        }
+    }
+
+    /** Append current round (user query + AI answer) to both checkpoint and MySQL. */
+    private void appendRoundToCheckpoint(RunnableConfig config, String query, String answer) {
+        if (query == null || answer == null || answer.isEmpty()) return;
+        // Write to checkpoint for context accumulation + sliding window compression
+        try {
+            reactGraph.updateState(config, Map.of("messages",
+                    List.of(ReActAgentState.userMsg(query),
+                            ReActAgentState.aiMsg(answer))));
+            log.info("Appended round to checkpoint: threadId={}, answerLen={}",
+                    config.threadId(), answer.length());
+        } catch (Exception e) {
+            log.error("Failed to append round to checkpoint for {}: {}",
+                    config.threadId(), e.getMessage());
         }
     }
 
@@ -332,6 +428,18 @@ public class ReactStreamController {
         return null;
     }
 
+    private String buildFallbackAnswer(ReActAgentState state) {
+        Map<String, Object> sp = state.scratchpad();
+        boolean hasData = sp != null && sp.entrySet().stream()
+                .anyMatch(e -> !e.getKey().startsWith("_") && e.getValue() != null
+                        && !e.getValue().toString().isEmpty());
+
+        if (hasData) {
+            return "抱歉，查询过程有些复杂，未能完成全部分析。以下是已获取的部分信息，您可以参考或换个方式再问。";
+        }
+        return "抱歉，当前无法完成您的请求。请尝试换个更具体的问法，我会尽力帮您。";
+    }
+
     private void completeWithError(SseEmitter emitter, String msg) {
         try {
             emitter.send(SseEmitter.event().name("error").data(Map.of("message", msg)));
@@ -350,6 +458,11 @@ public class ReactStreamController {
         init.put("lastToolName", "");
         init.put("lastToolArgs", "");
         init.put("fatalErrorCount", 0);
+        init.put("replanCount", 0);
+        init.put("toolCallCount", 0);
+        init.put("pendingConfirmation", false);
+        init.put("confirmationPrompt", "");
+        init.put("userChoice", "");
         init.put("scratchpad", new LinkedHashMap<>());
         init.put("messages", new ArrayList<>());
         init.put("compressedSummary", "");

@@ -129,6 +129,11 @@
             <artifactId>postgresql</artifactId>
             <version>42.7.7</version>
         </dependency>
+        <!-- HikariCP connection pool — PGSimpleDataSource 每次 getConnection() 都新建 TCP，导致 25s 延迟 -->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

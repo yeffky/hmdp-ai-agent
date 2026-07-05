@@ -32,9 +32,9 @@ public class GeoSearchTool {
     @Resource
     private ShopMapper shopMapper;
 
-    @Tool("按地理位置搜索指定类型的商家，涉及到距离、附近、范围内这种词的时候进行此查询，返回距离范围内的商家列表（含名称、评分、均价、距离等）")
+    @Tool("按地理位置搜索指定类型的商家。商家类型为一级大类：1=美食（含火锅、茶餐厅、日料、烧烤、小吃等所有餐饮）、2=KTV、3=酒店、4=酒吧、5=咖啡厅、6=电影院、7=足疗按摩。用户说的具体菜系（如茶餐厅、火锅）应归类到美食(typeId=1)，不要当作类型名去搜类型表")
     public String geoSearch(
-            @P("商家类型ID（整数），如: 1=美食, 2=KTV, 3=酒店。不确定时先用 query 查询") int typeId,
+            @P("商家类型ID（整数）。可选值：1=美食,2=KTV,3=酒店,4=酒吧,5=咖啡厅,6=电影院,7=足疗按摩。用户说的火锅/茶餐厅/日料等都属于美食(typeId=1)") int typeId,
             @P("用户当前经度") double x,
             @P("用户当前纬度") double y,
             @P("搜索半径（米）") int radius) {
@@ -74,7 +74,7 @@ public class GeoSearchTool {
             return JSONUtil.toJsonPrettyStr(list);
         } catch (Exception e) {
             log.error("GeoSearch failed", e);
-            return "Geo搜索失败: " + e.getMessage();
+            throw new com.hmdp.agent.graph.error.ToolException("geoSearch", "Geo搜索失败: " + e.getMessage(), e);
         }
     }
 

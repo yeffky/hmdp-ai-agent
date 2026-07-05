@@ -1,5 +1,6 @@
 package com.hmdp.agent.graph.nodes;
 
+import com.hmdp.agent.graph.error.ErrorCategory;
 import com.hmdp.agent.graph.state.ReActAgentState;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -37,6 +38,29 @@ public class JudgeNode implements NodeAction<ReActAgentState> {
         String report = state.observerReport();
         Map<String, Object> sp = state.scratchpad();
 
+        // ============================================================
+        // Executor 触发的 ask_user / USER_FIXABLE：先尝试 replan，不行再问用户
+        // ============================================================
+        boolean executorWantsAskUser = sp.containsKey("ask_user_missing")
+                || ErrorCategory.USER_FIXABLE.name().equals(state.errorCategory());
+
+        if (executorWantsAskUser) {
+            String missing = (String) sp.getOrDefault("ask_user_missing", "缺少必要参数");
+            if (state.replanCount() < 1) {
+                log.info("Judge: executor wants ask_user but replan not yet attempted, routing to planner");
+                return Map.of(
+                        "observerFeedback", "当前工具调用缺少必要信息: " + missing + "。请尝试用其他方式获取这些信息，如换工具、换查询策略。",
+                        "nextNode", "planner"
+                );
+            }
+            // replan 已用尽 → 直接 ask_user
+            log.info("Judge: executor wants ask_user and replan exhausted, routing to answer");
+            return Map.of("finalAnswer", missing, "nextNode", "answer");
+        }
+
+        // ============================================================
+        // 正常充分性判断
+        // ============================================================
         StringBuilder prompt = new StringBuilder();
         prompt.append(state.contextBlock()).append("\n");
         prompt.append("## 用户问题\n").append(query).append("\n\n");

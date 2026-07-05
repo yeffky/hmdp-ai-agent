@@ -78,6 +78,46 @@ public class ChatHistoryRepository {
         }
     }
 
+    /**
+     * 按关键词搜索聊天历史 — 供 HistorySearchTool 调用。
+     * 关键词以空格/逗号分隔，在 user_message 和 assistant_message 中做 ILIKE 模糊匹配。
+     */
+    public List<ChatHistoryRound> searchByKeywords(Long userId, String keywords, int limit) {
+        String[] words = keywords.split("[\\s,，、]+");
+        if (words.length == 0) return List.of();
+
+        StringBuilder sql = new StringBuilder(
+            "SELECT id, user_message, assistant_message, create_time FROM tb_chat_history WHERE user_id = ? AND (");
+        for (int i = 0; i < words.length; i++) {
+            if (i > 0) sql.append(" OR ");
+            String w = words[i].trim();
+            if (w.isEmpty()) continue;
+            sql.append("user_message ILIKE ? OR assistant_message ILIKE ?");
+        }
+        sql.append(") ORDER BY id DESC LIMIT ?");
+
+        // Build params: userId + 2 params per keyword (for user_message and assistant_message) + limit
+        Object[] params = new Object[1 + words.length * 2 + 1];
+        int idx = 0;
+        params[idx++] = userId;
+        for (String w : words) {
+            String pattern = "%" + w.trim() + "%";
+            params[idx++] = pattern;
+            params[idx++] = pattern;
+        }
+        params[idx] = limit;
+
+        try {
+            List<ChatHistoryRound> result = pg.query(sql.toString(), this::mapRow, params);
+            log.info("History keyword search: userId={}, keywords='{}', rows={}",
+                    userId, keywords, result.size());
+            return result;
+        } catch (Exception e) {
+            log.error("History keyword search failed for userId={}: {}", userId, e.getMessage());
+            return List.of();
+        }
+    }
+
     private ChatHistoryRound mapRow(ResultSet rs, int rowNum) throws SQLException {
         ChatHistoryRound r = new ChatHistoryRound();
         r.setId(rs.getLong("id"));

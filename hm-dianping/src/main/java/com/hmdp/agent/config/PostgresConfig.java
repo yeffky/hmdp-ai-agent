@@ -1,6 +1,7 @@
 package com.hmdp.agent.config;
 
-import org.postgresql.ds.PGSimpleDataSource;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -12,10 +13,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import javax.sql.DataSource;
 
 /**
- * PostgreSQL 数据源配置 — 供 Checkpoint Saver 和 UserStore 共用。
+ * PostgreSQL 数据源配置 — 供 Checkpoint Saver、UserStore 和 ChatHistoryRepository 共用。
  *
- * <p>使用 {@link PGSimpleDataSource} 直连，绕过 JDBC {@code DriverManager}
- * 避免 classpath 上的 MySQL 驱动错误接管 PostgreSQL 连接。</p>
+ * <p>使用 HikariCP 连接池替代 {@code PGSimpleDataSource}，
+ * 避免每次 checkpoint/getConnection 操作都新建 TCP 连接。</p>
  */
 @Configuration
 public class PostgresConfig {
@@ -33,13 +34,21 @@ public class PostgresConfig {
 
     @Bean(name = "postgresDataSource")
     public DataSource postgresDataSource() {
-        PGSimpleDataSource ds = new PGSimpleDataSource();
-        ds.setURL(url);
-        ds.setUser(username);
-        ds.setPassword(password);
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(url);
+        config.setUsername(username);
+        config.setPassword(password);
+        config.setMaximumPoolSize(5);
+        config.setMinimumIdle(1);
+        config.setConnectionTimeout(5000);
+        config.setIdleTimeout(300000);
+        config.setMaxLifetime(600000);
+        config.setPoolName("PostgresPool");
+
+        HikariDataSource ds = new HikariDataSource(config);
 
         try (java.sql.Connection conn = ds.getConnection()) {
-            log.info("PostgreSQL connected: {}", url);
+            log.info("PostgreSQL connected (HikariCP): {}", url);
         } catch (Exception e) {
             throw new RuntimeException("PostgreSQL unreachable at " + url + ": " + e.getMessage(), e);
         }

@@ -85,7 +85,6 @@ public class QueueTicketTool {
             return "用户未登录，无法取消排队。";
         }
         if (ticketId == null || ticketId.isEmpty()) {
-            // 尝试查询用户当前排队记录
             try {
                 Map<String, Object> myTicket = queueTicketService.queryMyTicket();
                 if (myTicket == null) {
@@ -106,7 +105,6 @@ public class QueueTicketTool {
     }
 
     private Long getUserId() {
-        // Agent 异步执行时 ThreadLocal 丢失，优先从 ToolContext 读取
         Long ctxUserId = com.hmdp.agent.ToolContext.getUserId();
         if (ctxUserId != null && ctxUserId > 0) return ctxUserId;
         try {

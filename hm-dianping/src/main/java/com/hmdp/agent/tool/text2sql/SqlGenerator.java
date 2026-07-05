@@ -96,6 +96,8 @@ public class SqlGenerator {
 
                 ## 规则
                 - 只生成一条 SELECT 语句
+                - 只能使用上面表结构中列出的列名，绝对禁止编造任何列名（如 avatar、phone、email、address 等常见名如果不在schema中就不能用）
+                - 如果 JOIN 的表不在上面的表结构列表中，说明该表不需要 JOIN，去掉这个 JOIN
                 - JOIN 时使用表名.列名格式避免歧义
                 - 使用 MySQL 语法
                 - 查询结果数量控制在合理范围，默认 LIMIT 20

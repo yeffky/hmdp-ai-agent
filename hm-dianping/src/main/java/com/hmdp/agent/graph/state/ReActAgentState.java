@@ -101,6 +101,26 @@ public class ReActAgentState extends AgentState {
         return this.<Number>value("emptyResultRetries").map(Number::intValue).orElse(0);
     }
 
+    public int replanCount() {
+        return this.<Number>value("replanCount").map(Number::intValue).orElse(0);
+    }
+
+    public int toolCallCount() {
+        return this.<Number>value("toolCallCount").map(Number::intValue).orElse(0);
+    }
+
+    public boolean pendingConfirmation() {
+        return this.<Boolean>value("pendingConfirmation").orElse(false);
+    }
+
+    public String confirmationPrompt() {
+        return this.<String>value("confirmationPrompt").orElse("");
+    }
+
+    public String userChoice() {
+        return this.<String>value("userChoice").orElse("");
+    }
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> scratchpad() {
         return this.<Map<String, Object>>value("scratchpad").orElse(new LinkedHashMap<>());

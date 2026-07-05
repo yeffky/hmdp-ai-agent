@@ -83,6 +83,11 @@ public final class StateSchema {
     public static final Channel<Long>    USER_ID              = lww(0L);
     public static final Channel<String>  ERROR_CONTEXT        = lww("");
     public static final Channel<Integer> EMPTY_RESULT_RETRIES = lww(0);
+    public static final Channel<Integer> REPLAN_COUNT         = lww(0);
+    public static final Channel<Integer> TOOL_CALL_COUNT       = lww(0);
+    public static final Channel<Boolean> PENDING_CONFIRMATION  = lww(false);
+    public static final Channel<String>  CONFIRMATION_PROMPT   = lww("");
+    public static final Channel<String>  USER_CHOICE           = lww("");
 
     // ======== Channel Map ========
 
@@ -111,6 +116,11 @@ public final class StateSchema {
         channels.put("userId",             USER_ID);
         channels.put("errorContext",       ERROR_CONTEXT);
         channels.put("emptyResultRetries", EMPTY_RESULT_RETRIES);
+        channels.put("replanCount",        REPLAN_COUNT);
+        channels.put("toolCallCount",       TOOL_CALL_COUNT);
+        channels.put("pendingConfirmation", PENDING_CONFIRMATION);
+        channels.put("confirmationPrompt",  CONFIRMATION_PROMPT);
+        channels.put("userChoice",          USER_CHOICE);
         return channels;
     }
 }

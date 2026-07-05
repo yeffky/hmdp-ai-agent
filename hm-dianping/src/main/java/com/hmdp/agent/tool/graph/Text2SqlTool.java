@@ -115,32 +115,57 @@ public class Text2SqlTool {
 
             log.info("Text2SQL step2: SQL={}", sql);
 
-            // ======== 第3步：执行 SQL ========
+            // ======== 第3步：SQL 安全加固 + 执行 ========
+            sql = enforceLimit(sql, 20);
+
+            // 先 COUNT 总数
+            int totalCount = -1;
+            String countSql = buildCountSql(sql);
+            try {
+                Number cnt = jdbcTemplate.queryForObject(countSql, Integer.class);
+                if (cnt != null) totalCount = cnt.intValue();
+            } catch (Exception ignored) {
+                // COUNT 失败不影响主查询
+            }
+
             List<Map<String, Object>> rows;
             try {
                 rows = jdbcTemplate.queryForList(sql);
             } catch (Exception e) {
                 log.error("SQL execution failed: {} — {}", sql, e.getMessage());
-                return "查询执行失败: " + e.getMessage();
+                throw new com.hmdp.agent.graph.error.ToolException("text2Sql",
+                        "查询执行失败: " + e.getMessage(), e);
             }
 
             String resultJson;
             if (rows.isEmpty()) {
                 resultJson = "[]";
             } else {
-                int maxRows = 30;
-                if (rows.size() > maxRows) {
-                    rows = rows.subList(0, maxRows);
-                }
                 resultJson = JSONUtil.toJsonPrettyStr(rows);
             }
 
-            log.info("Text2SQL step3: {} rows returned", rows.size());
-            return "【SQL】" + sql + "\n【结果】" + resultJson;
+            // 结构化汇总信息
+            StringBuilder summary = new StringBuilder();
+            if (totalCount >= 0) {
+                summary.append("【总记录数】").append(totalCount).append(" 条");
+                if (totalCount > 20) {
+                    summary.append(" → 仅展示前 20 条，请缩小查询条件（如加 WHERE、选更具体的表）");
+                }
+                summary.append("\n");
+            }
+            if (rows.isEmpty()) {
+                summary.append("【结果】未查到数据\n");
+            }
 
+            log.info("Text2SQL step3: total={}, returned={}, sql={}", totalCount, rows.size(), sql);
+            return summary + "【SQL】" + sql + "\n【结果】" + resultJson;
+
+        } catch (com.hmdp.agent.graph.error.ToolException e) {
+            throw e;  // 直接透传，避免重复包装
         } catch (Exception e) {
             log.error("Text2SQL failed for query: {}", description, e);
-            return "Text2SQL查询异常: " + e.getMessage();
+            throw new com.hmdp.agent.graph.error.ToolException("text2Sql",
+                    "Text2SQL查询异常: " + e.getMessage(), e);
         }
     }
 
@@ -151,5 +176,29 @@ public class Text2SqlTool {
             if (UserHolder.getUser() != null) return UserHolder.getUser().getId();
         } catch (Exception ignored) {}
         return null;
+    }
+
+    // ======== SQL 安全加固 ========
+
+    /** 强制追加 LIMIT，防止全表扫描 */
+    static String enforceLimit(String sql, int defaultLimit) {
+        String upper = sql.trim().toUpperCase();
+        if (upper.contains(" LIMIT ") || upper.contains(" TOP ") || upper.contains(" FETCH ")) {
+            return sql;
+        }
+        String clean = sql.trim().replaceAll(";+\\s*$", "");
+        return clean + " LIMIT " + defaultLimit;
+    }
+
+    /** 从 SELECT 构建 COUNT 查询，去掉 ORDER BY/LIMIT/OFFSET */
+    static String buildCountSql(String sql) {
+        String upper = sql.trim().toUpperCase();
+        int fromIdx = upper.indexOf(" FROM ");
+        if (fromIdx < 0) return "SELECT 0";
+        String afterFrom = sql.substring(fromIdx);
+        afterFrom = afterFrom.replaceAll("(?i)\\s+ORDER\\s+BY\\s+.*", "");
+        afterFrom = afterFrom.replaceAll("(?i)\\s+LIMIT\\s+\\d+.*", "");
+        afterFrom = afterFrom.replaceAll("(?i)\\s+OFFSET\\s+\\d+.*", "");
+        return "SELECT COUNT(*)" + afterFrom;
     }
 }

@@ -28,6 +28,12 @@ public class AnswerNode implements NodeAction<ReActAgentState> {
     public Map<String, Object> apply(ReActAgentState state) throws Exception {
         String presetAnswer = state.finalAnswer();
 
+        // Planner 已设置 streamingPrompt（如 replan 上限），直接透传
+        if ("__STREAMING__".equals(presetAnswer)) {
+            log.info("Answer: streaming prompt already set by upstream, passing through");
+            return Map.of("nextNode", "__END__");
+        }
+
         // Executor 触发的错误 → 让 LLM 生成用户友好的脱敏回答
         if ("__ERROR__".equals(presetAnswer)) {
             return buildErrorAnswer(state);
@@ -73,8 +79,9 @@ public class AnswerNode implements NodeAction<ReActAgentState> {
         prompt.append("- 只回答当前问题，不要索要与当前问题无关的信息");
 
         String promptStr = prompt.toString();
-        log.info("Answer prompt assembled ({} chars), signaling streaming", promptStr);
+        log.info("Answer prompt assembled ({} chars), signaling streaming", promptStr.length());
 
+        // 流式回答：标记 __STREAMING__，Controller 负责流式生成 + 追加本轮 Q&A 到 checkpoint
         return Map.of(
                 "streamingPrompt", promptStr,
                 "finalAnswer", "__STREAMING__",

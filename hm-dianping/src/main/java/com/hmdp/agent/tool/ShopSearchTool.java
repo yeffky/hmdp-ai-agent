@@ -4,6 +4,7 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
+import com.hmdp.agent.graph.error.ToolException;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.slf4j.Logger;
@@ -60,7 +61,7 @@ public class ShopSearchTool {
             return JSONUtil.toJsonPrettyStr(list);
         } catch (Exception e) {
             log.error("searchShop failed for '{}'", name, e);
-            return "商铺搜索失败: " + e.getMessage();
+            throw new ToolException("searchShop", "商铺搜索失败: " + e.getMessage(), e);
         }
     }
 }
