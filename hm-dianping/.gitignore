@@ -37,3 +37,7 @@ D:\\apache-maven-3.6.3/
 # RAG 文档摄入运行时文件
 rag-doc-state.json
 rag-documents/
+
+# 本地配置（含密码/密钥）
+src/main/resources/application.yaml
+application.yaml

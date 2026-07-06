@@ -15,7 +15,7 @@ import java.util.Map;
 public class DeepSeekConnectivityTest {
 
     // ======== 改成你的实际配置 ========
-    private static final String API_KEY = "REDACTED_API_KEY";
+    private static final String API_KEY = System.getenv().getOrDefault("DEEPSEEK_API_KEY", "");
     private static final String MODEL = "deepseek-chat";
 
     private final RestTemplate rt = new RestTemplate();
