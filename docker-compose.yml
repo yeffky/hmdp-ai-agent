@@ -1,4 +1,5 @@
-# Qdrant 向量数据库 - 用于 RAG 知识库
+# 本地开发环境 — 向量数据库 + LLM Embedding
+# 部署方式: docker compose up -d
 services:
   qdrant:
     image: qdrant/qdrant:v1.9.0
@@ -17,5 +18,20 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: hmdp-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   qdrant_data:
+  ollama_data:

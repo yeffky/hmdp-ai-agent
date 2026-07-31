@@ -1,0 +1,51 @@
+# 服务器部署 — PostgreSQL 16 + RabbitMQ
+# 部署方式: docker compose up -d
+services:
+  postgres:
+    image: postgres:16
+    container_name: hmdp-postgres16
+    ports:
+      - "5438:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-change-me}
+      - POSTGRES_DB=postgres
+      - TZ=Asia/Shanghai
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - /data/postgres:/var/lib/postgresql/data:Z
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: hmdp-rabbitmq
+    ports:
+      - "5670:5672"
+      - "15670:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=hmdp
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS:-change-me}
+    mem_limit: 512m
+    mem_reservation: 128m
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  rabbitmq_data:

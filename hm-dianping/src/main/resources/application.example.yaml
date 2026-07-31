@@ -28,6 +28,16 @@ spring:
         max-idle: 0                   # 不复用空闲连接——避免远程断连后超时
         min-idle: 0
         time-between-eviction-runs: 10s
+  rabbitmq:
+    host: your-rabbitmq-host
+    port: 5672
+    username: guest
+    password: guest
+    listener:
+      simple:
+        acknowledge-mode: manual      # 手动确认
+        prefetch: 1                   # 每次只取1条，公平分发
+        concurrency: 3                # 消费者线程数
   jackson:
     default-property-inclusion: non_null
 mybatis-plus:
@@ -102,3 +112,13 @@ agent:
       keep-recent-tokens: 2000        # 保留最近 N tokens 不压缩
       max-summary-tokens: 500         # 压缩摘要最大 token 数
       max-uncompressed-messages: 50   # 硬上限：最多保留消息数（兜底）
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+  metrics:
+    export:
+      prometheus:
+        enabled: true
