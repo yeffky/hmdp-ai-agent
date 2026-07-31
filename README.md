@@ -12,6 +12,7 @@
 | ORM | MyBatis-Plus 3.4.3 |
 | 数据库 | MySQL 8.0 + PostgreSQL (checkpoint) |
 | 缓存 / 锁 | Redis + Jedis + Redisson 3.22.0 |
+| 消息队列 | RabbitMQ 3.12 (DLQ 死信 + 有限重试) |
 | 向量数据库 | Qdrant 1.9.0 (REST API) |
 | Embedding | Ollama bge-m3 / SiliconFlow BAAI/bge-large-zh-v1.5 |
 | 连接池 | HikariCP |
@@ -77,6 +78,25 @@ LLM 选表 → 生成 SQL → 安全校验 → 执行。SQL 自动强制 `LIMIT`
 
 滑动窗口机制（LLM 摘要压缩 + 硬上限裁剪），最近 3 轮全量对话；超出部分通过 PostgreSQL ILIKE 关键词检索实现按需历史回溯。
 
+### 秒杀异步化（Redis Lua + RabbitMQ）
+
+```
+用户秒杀请求
+   ↓
+Redis Lua 脚本（原子：校验库存 + 一人一单 + 扣减库存）
+   ↓ 通过后
+发布消息到 RabbitMQ (seckill.order.exchange)
+   ↓
+Consumer 异步消费 → Redisson 分布式锁 → 写库落单
+   ↓ 失败
+有限重试（2s / 5s / 10s）→ 超过 3 次转入 DLQ
+```
+
+- 秒杀入口：Lua 脚本在 Redis 侧原子完成库存校验/扣减与一人一单判定，扛住高并发
+- 异步落单：通过 RabbitMQ 解耦，Consumer 手动 ACK + prefetch=1 公平分发，`concurrency=3`
+- 可靠投递：消费失败自动重试（指数退避 2s/5s/10s），超过 3 次转入死信队列 `seckill.order.dlq`，避免无限重试
+- 幂等兜底：`tb_voucher_order` 唯一索引 `(user_id, voucher_id)` 作为 DB 层最后防线，防重复下单
+
 ## 项目结构
 
 ```
@@ -141,6 +161,7 @@ hm-dianping/src/main/java/com/hmdp/
 | MySQL | 8.0+ | 业务数据（商铺、订单、用户等） |
 | PostgreSQL | 14+ | Agent checkpoint 持久化 + 聊天历史、用户画像 |
 | Redis | 6+ | 缓存 / 分布式锁 / Token 存储 / GeoSearch |
+| RabbitMQ | 3.12+ | 秒杀订单异步消息队列 |
 | Docker | 20+ | Qdrant 向量数据库 |
 | Ollama | 最新 | Embedding 模型（可选，也可用 SiliconFlow 云端 API） |
 | Nginx | 1.18+ | 前端静态文件 + API 反向代理 |
@@ -151,6 +172,12 @@ hm-dianping/src/main/java/com/hmdp/
 
 ```bash
 mysql -u root -p < src/main/resources/db/hmdp.sql
+```
+
+秒杀幂等兜底需要唯一索引（防止同一用户重复购买同一券）：
+
+```sql
+ALTER TABLE tb_voucher_order ADD UNIQUE INDEX uk_user_voucher (user_id, voucher_id);
 ```
 
 **PostgreSQL** — 创建数据库，表由 `DeltaPostgresSaver` 和 `PostgresConfig` 自动创建：
@@ -167,9 +194,12 @@ psql -U postgres -c "CREATE DATABASE hmdp;"
 # Redis（如未运行）
 redis-server
 
-# Qdrant 向量数据库
+# 本地开发依赖：Qdrant 向量数据库 + Ollama Embedding
 cd hmdp-ai-agent
 docker compose up -d
+
+# 服务器部署依赖：PostgreSQL + RabbitMQ（端口 5670/15670，密码用环境变量注入）
+docker compose -f docker-compose.server.yml up -d
 
 # Ollama Embedding（本地方案）
 ollama serve
@@ -199,6 +229,13 @@ spring:
   redis:
     host: <host>
     port: 6379
+    password: <your-password>
+
+# RabbitMQ（秒杀异步消息队列，注意端口对齐 compose 映射）
+  rabbitmq:
+    host: <host>
+    port: 5672
+    username: <user>
     password: <your-password>
 
 # DeepSeek LLM
@@ -276,6 +313,7 @@ mvn spring-boot:run
 PostgreSQL connected (HikariCP): jdbc:postgresql://...
 ToolRegistry initialized with 6 tools:
 ReAct Graph compiled with DeltaPostgresSaver
+Declaring exchange 'seckill.order.exchange', queue 'seckill.order.queue'...
 ```
 
 ### 7. 验证
@@ -287,6 +325,7 @@ ReAct Graph compiled with DeltaPostgresSaver
 | Agent 对话 | 右下角聊天框输入"你好" | ReAct Agent 规划→执行→回答 |
 | RAG 检索 | 打开 `/kb-admin.html` → 导入种子数据 → 问"怎么退款" | 从知识库检索并回答 |
 | 排队取号 | 问"帮我在XX店排队" | Agent 查询商铺 → 确认 → 取号 |
+| 秒杀下单 | `POST /voucher-order/seckill/{id}` | Lua 校验 → 消息入队 → Consumer 异步落单；RabbitMQ 管理台可查队列与 DLQ |
 
 ### 8. 初始化知识库
 
@@ -310,6 +349,8 @@ curl -X POST http://localhost:8081/kb/ingest \
 | Agent 对话无响应 | 检查 DeepSeek API Key 和网络连通性；确认 `deepseek.base-url` 配置正确 |
 | checkpoint 加载慢 | 首次启动后执行 `DELETE FROM lg4jcheckpoint` 清空旧全量数据 |
 | Qdrant 连接失败 | `docker compose ps` 确认 Qdrant 运行中；访问 `http://localhost:6333/health` |
+| RabbitMQ 连接失败 | `docker compose -f docker-compose.server.yml ps` 确认 RabbitMQ 运行中；检查 `application.yaml` 的 `spring.rabbitmq` 端口（host 映射 5670） |
+| 秒杀消息堆积/DLQ 有消息 | 查看 Consumer 日志确认失败原因；DLQ 队列 `seckill.order.dlq` 手动消费后排查 |
 | Embedding 失败 | Ollama 是否启动？`ollama list` 确认 `bge-m3` 已下载 |
 | SSE 流式不工作 | Nginx `proxy_buffering off` 是否配置？浏览器 Network 面板查看 EventStream |
 
