@@ -10,6 +10,9 @@ import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.HashMap;
+import java.util.Map;
+
 @Configuration
 public class RabbitMQConfig {
 
@@ -23,7 +26,10 @@ public class RabbitMQConfig {
 
     @Bean
     public Queue seckillOrderQueue() {
-        return new Queue(SECKILL_ORDER_QUEUE, true);
+        Map<String, Object> args = new HashMap<>();
+        args.put("x-dead-letter-exchange", SECKILL_ORDER_DLX);
+        args.put("x-dead-letter-routing-key", SECKILL_ORDER_DLQ_ROUTING_KEY);
+        return new Queue(SECKILL_ORDER_QUEUE, true, false, false, args);
     }
 
     @Bean

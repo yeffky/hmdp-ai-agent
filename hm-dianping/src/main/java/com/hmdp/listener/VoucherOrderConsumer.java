@@ -71,11 +71,12 @@ public class VoucherOrderConsumer {
         } else {
             log.error("秒杀订单消费失败，已重试{}次，转入DLQ: orderId={}",
                     MAX_RETRY, voucherOrder.getId());
-            rabbitTemplate.convertAndSend(
-                    RabbitMQConfig.SECKILL_ORDER_DLX,
-                    RabbitMQConfig.SECKILL_ORDER_DLQ_ROUTING_KEY,
-                    voucherOrder);
-            ackAndLog(channel, deliveryTag, voucherOrder.getId());
+            // requeue=false + 队列已声明 x-dead-letter-exchange → RabbitMQ 原生路由到 DLQ
+            try {
+                channel.basicNack(deliveryTag, false, false);
+            } catch (IOException ex) {
+                log.error("消息Nack失败，无法进入DLQ: orderId={}", voucherOrder.getId(), ex);
+            }
         }
     }
 

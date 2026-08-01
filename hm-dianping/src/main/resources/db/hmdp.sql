@@ -1282,6 +1282,23 @@ CREATE TABLE `tb_voucher_order`  (
 -- ----------------------------
 
 -- ----------------------------
+-- Table structure for tb_dead_order (秒杀死信订单)
+-- ----------------------------
+DROP TABLE IF EXISTS `tb_dead_order`;
+CREATE TABLE `tb_dead_order` (
+  `id` bigint(20) NOT NULL COMMENT '主键（订单id）',
+  `user_id` bigint(20) UNSIGNED NOT NULL COMMENT '下单的用户id',
+  `voucher_id` bigint(20) UNSIGNED NOT NULL COMMENT '购买的代金券id',
+  `fail_reason` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'unknown' COMMENT '失败原因（x-death reason：rejected/expired/maxlen）',
+  `retry_count` int(11) NOT NULL DEFAULT 0 COMMENT '进入DLQ时的重试次数',
+  `dlq_rounds` int(11) NOT NULL DEFAULT 0 COMMENT '经过DLQ处理的轮次',
+  `status` tinyint(1) NOT NULL DEFAULT 0 COMMENT '处理状态 0-待处理 1-已重放 2-已确认丢弃',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '进入DLQ时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  INDEX `idx_user_voucher` (`user_id`, `voucher_id`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact COMMENT = '秒杀死信订单记录';
+
+-- ----------------------------
 -- Table structure for tb_chat_message (AI客服聊天记录)
 -- ----------------------------
 DROP TABLE IF EXISTS `tb_chat_message`;

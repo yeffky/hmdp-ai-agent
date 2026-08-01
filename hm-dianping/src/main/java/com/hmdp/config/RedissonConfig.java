@@ -25,10 +25,14 @@ public class RedissonConfig {
         config.useSingleServer()
                 .setAddress("redis://" + redisHost + ":" + redisPort)
                 .setPassword(redisPassword)
-                .setTimeout(5000)          // 命令超时 5s
-                .setRetryAttempts(2)       // 失败重试 2 次
-                .setRetryInterval(1000)    // 重试间隔 1s
-                .setPingConnectionInterval(0);  // 禁用 PING 保活（避免空闲断连报错刷日志）
+                .setTimeout(10000)          // 命令超时 10s（远程 Redis 公网延迟高）
+                .setConnectTimeout(10000)   // 建连超时 10s
+                .setRetryAttempts(3)        // 失败重试 3 次
+                .setRetryInterval(1500)     // 重试间隔 1.5s
+                .setPingConnectionInterval(30000) // 30s PING 保活——提前感知死连接并重建，避免命令撞上被 NAT 静默断开的连接
+                .setIdleConnectionTimeout(30000)  // 空闲 30s 主动回收，不让 NAT/防火墙先杀连接
+                .setKeepAlive(true)         // TCP keepalive
+                .setTcpNoDelay(true);       // 关闭 Nagle，降低小命令（锁）延迟
         return Redisson.create(config);
     }
 }
