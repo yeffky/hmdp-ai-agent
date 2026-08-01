@@ -31,7 +31,7 @@ public class DeadOrderServiceImpl extends ServiceImpl<DeadOrderMapper, DeadOrder
         }
 
         VoucherOrder voucherOrder = new VoucherOrder();
-        voucherOrder.setId(deadOrder.getId());
+        voucherOrder.setId(deadOrder.getOrderId());
         voucherOrder.setUserId(deadOrder.getUserId());
         voucherOrder.setVoucherId(deadOrder.getVoucherId());
 
@@ -65,15 +65,13 @@ public class DeadOrderServiceImpl extends ServiceImpl<DeadOrderMapper, DeadOrder
     /**
      * 构建死信记录实体（供 DeadLetterConsumer 落库）
      */
-    public DeadOrder buildRecord(VoucherOrder voucherOrder, String failReason,
-                                 int retryCount, int dlqRounds) {
+    public DeadOrder buildRecord(VoucherOrder voucherOrder, String failReason, int retryCount) {
         DeadOrder deadOrder = new DeadOrder();
-        deadOrder.setId(voucherOrder.getId());
+        deadOrder.setOrderId(voucherOrder.getId());
         deadOrder.setUserId(voucherOrder.getUserId());
         deadOrder.setVoucherId(voucherOrder.getVoucherId());
         deadOrder.setFailReason(failReason);
         deadOrder.setRetryCount(retryCount);
-        deadOrder.setDlqRounds(dlqRounds);
         deadOrder.setStatus(0);
         deadOrder.setCreateTime(LocalDateTime.now());
         return deadOrder;

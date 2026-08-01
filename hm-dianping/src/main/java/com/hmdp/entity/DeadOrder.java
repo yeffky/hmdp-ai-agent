@@ -22,10 +22,15 @@ public class DeadOrder implements Serializable {
     private static final long serialVersionUID = 1L;
 
     /**
-     * 主键（订单id）
+     * 主键（自增）
      */
-    @TableId(value = "id", type = IdType.INPUT)
+    @TableId(value = "id", type = IdType.AUTO)
     private Long id;
+
+    /**
+     * 秒杀订单id（业务键，同一订单多次失败可各留一条审计记录）
+     */
+    private Long orderId;
 
     /**
      * 下单的用户id
@@ -48,11 +53,6 @@ public class DeadOrder implements Serializable {
     private Integer retryCount;
 
     /**
-     * 经过 DLQ 处理的轮次
-     */
-    private Integer dlqRounds;
-
-    /**
      * 处理状态 0-待处理 1-已重放 2-已确认丢弃
      */
     private Integer status;
@@ -61,4 +61,9 @@ public class DeadOrder implements Serializable {
      * 进入 DLQ 时间
      */
     private LocalDateTime createTime;
+
+    /**
+     * 更新时间（重放/丢弃时变化）
+     */
+    private LocalDateTime updateTime;
 }

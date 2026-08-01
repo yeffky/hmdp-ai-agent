@@ -9,7 +9,6 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.Resource;
@@ -82,19 +81,14 @@ public class DeadLetterConsumer {
         }
     }
 
-    /** 永久死信落库 tb_dead_order，status=0 待处理（幂等：同 orderId 已记录则跳过） */
+    /** 永久死信落库 tb_dead_order，status=0 待处理（自增主键，同订单多次失败各留一条审计记录） */
     private void recordPermanent(VoucherOrder voucherOrder, Message message, String failReason) {
         Integer retryCount = message.getMessageProperties().getHeader("x-retry-count");
-        try {
-            deadOrderService.save(deadOrderService.buildRecord(
-                    voucherOrder, failReason, retryCount == null ? 0 : retryCount, 0));
-            log.error("死信订单永久记录: orderId={}, userId={}, voucherId={}, reason={}, retryCount={}",
-                    voucherOrder.getId(), voucherOrder.getUserId(), voucherOrder.getVoucherId(),
-                    failReason, retryCount);
-        } catch (DuplicateKeyException dup) {
-            // 同一条消息的重复副本，主键 orderId 已存在 → 已记录过，直接视为成功，避免无限循环
-            log.warn("死信订单已记录过，跳过重复副本: orderId={}", voucherOrder.getId());
-        }
+        deadOrderService.save(deadOrderService.buildRecord(
+                voucherOrder, failReason, retryCount == null ? 0 : retryCount));
+        log.error("死信订单永久记录: orderId={}, userId={}, voucherId={}, reason={}, retryCount={}",
+                voucherOrder.getId(), voucherOrder.getUserId(), voucherOrder.getVoucherId(),
+                failReason, retryCount);
     }
 
     private int readProcessCount(Message message) {

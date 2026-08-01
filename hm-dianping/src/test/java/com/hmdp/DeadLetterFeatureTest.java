@@ -4,6 +4,7 @@ import com.hmdp.config.RabbitMQConfig;
 import com.hmdp.entity.DeadOrder;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.service.impl.DeadOrderServiceImpl;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import org.junit.jupiter.api.*;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -52,13 +53,14 @@ class DeadLetterFeatureTest {
     @DisplayName("redeliver: 待处理死信重放成功，状态置为已重放")
     void testRedeliverSuccess() {
         DeadOrder record = insertRecord(100001L);
+        Long recordId = record.getId();
         try {
-            deadOrderService.redeliver(100001L);
-            DeadOrder after = deadOrderService.getById(100001L);
+            deadOrderService.redeliver(recordId);
+            DeadOrder after = deadOrderService.getById(recordId);
             assertNotNull(after, "重放后记录应存在");
             assertEquals(1, after.getStatus(), "重放后状态应为 1-已重放");
         } finally {
-            deadOrderService.removeById(100001L);
+            deadOrderService.removeById(recordId);
         }
     }
 
@@ -67,12 +69,13 @@ class DeadLetterFeatureTest {
     @DisplayName("redeliver: 已重放的死信再次重放应抛异常")
     void testRedeliverTwiceThrows() {
         DeadOrder record = insertRecord(100002L);
+        Long recordId = record.getId();
         try {
-            deadOrderService.redeliver(100002L);
-            assertThrows(RuntimeException.class, () -> deadOrderService.redeliver(100002L),
+            deadOrderService.redeliver(recordId);
+            assertThrows(RuntimeException.class, () -> deadOrderService.redeliver(recordId),
                     "已重放的死信不能再次重放");
         } finally {
-            deadOrderService.removeById(100002L);
+            deadOrderService.removeById(recordId);
         }
     }
 
@@ -82,13 +85,14 @@ class DeadLetterFeatureTest {
     @Order(4)
     @DisplayName("discard: 确认丢弃后状态置为已丢弃")
     void testDiscard() {
-        insertRecord(100003L);
+        DeadOrder record = insertRecord(100003L);
+        Long recordId = record.getId();
         try {
-            deadOrderService.discard(100003L);
-            DeadOrder after = deadOrderService.getById(100003L);
+            deadOrderService.discard(recordId);
+            DeadOrder after = deadOrderService.getById(recordId);
             assertEquals(2, after.getStatus(), "丢弃后状态应为 2-已确认丢弃");
         } finally {
-            deadOrderService.removeById(100003L);
+            deadOrderService.removeById(recordId);
         }
     }
 
@@ -132,9 +136,10 @@ class DeadLetterFeatureTest {
                 });
 
         // 轮询等待 DLQ 消费者落库（异步，最长 10s）
+        // 注：用字符串 QueryWrapper 而非 lambdaQuery，规避 Java 17 下 MyBatis-Plus 的 SerializedLambda 反射限制
         DeadOrder record = null;
         for (int i = 0; i < 20; i++) {
-            record = deadOrderService.getById(orderId);
+            record = deadOrderService.getOne(new QueryWrapper<DeadOrder>().eq("order_id", orderId));
             if (record != null) {
                 break;
             }
@@ -143,13 +148,13 @@ class DeadLetterFeatureTest {
 
         try {
             assertNotNull(record, "死信应被 DLQ 消费者直接落库");
-            assertEquals(orderId, record.getId(), "主键应为订单id");
+            assertEquals(orderId, record.getOrderId(), "应记录业务订单id");
             assertEquals(TEST_USER_ID, record.getUserId());
             assertEquals(TEST_VOUCHER_ID, record.getVoucherId());
             assertEquals(3, record.getRetryCount(), "应记录进入 DLQ 时的重试次数");
             assertEquals(0, record.getStatus(), "初始状态应为待处理");
         } finally {
-            deadOrderService.removeById(orderId);
+            deadOrderService.remove(new QueryWrapper<DeadOrder>().eq("order_id", orderId));
         }
     }
 
@@ -161,7 +166,7 @@ class DeadLetterFeatureTest {
         order.setUserId(TEST_USER_ID);
         order.setVoucherId(TEST_VOUCHER_ID);
 
-        DeadOrder record = deadOrderService.buildRecord(order, "rejected", 3, 1);
+        DeadOrder record = deadOrderService.buildRecord(order, "rejected", 3);
         record.setCreateTime(LocalDateTime.now());
         deadOrderService.save(record);
         return record;
