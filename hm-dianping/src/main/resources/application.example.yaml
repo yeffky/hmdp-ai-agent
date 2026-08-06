@@ -122,3 +122,18 @@ management:
     export:
       prometheus:
         enabled: true
+
+# ========== xxl-job 分布式任务调度（执行器） ==========
+xxl:
+  job:
+    enabled: false               # true 时启用执行器（需部署到可被调度中心回调的服务器）
+    admin:
+      addresses: http://your-xxl-admin-host:8080/xxl-job-admin
+    accessToken: default_token
+    executor:
+      appname: hmdp-executor
+      address:                  # 空则自动注册
+      ip:                       # 空则自动探测
+      port: 9999                # 执行器 HTTP 端口
+      logpath: ./logs/xxl-job/jobhandler
+      logretentiondays: 30

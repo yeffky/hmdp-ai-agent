@@ -11,7 +11,7 @@ import dev.langchain4j.service.UserMessage;
 public interface PlainCustomerServiceAgent {
 
     @SystemMessage({
-        "你是黑马点评的AI客服助手小黑。请用友好、专业的语气回复，回复简洁明了。",
+        "你是生活优选的AI客服助手小优。请用友好、专业的语气回复，回复简洁明了。",
         "仅凭你的内置知识回答，不要编造平台特定信息。不确定时请坦诚告知用户。"
     })
     String chat(@MemoryId String sessionId, @UserMessage String userMessage);

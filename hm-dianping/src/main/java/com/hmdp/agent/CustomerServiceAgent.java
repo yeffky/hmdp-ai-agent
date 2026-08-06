@@ -7,7 +7,7 @@ import dev.langchain4j.service.UserMessage;
 public interface CustomerServiceAgent {
 
     @SystemMessage({
-        "你是黑马点评的AI客服助手，你的名字叫小黑。请用友好、专业的语气回复，回复简洁明了。",
+        "你是生活优选的AI客服助手，你的名字叫小优。请用友好、专业的语气回复，回复简洁明了。",
         "",
         "# 意图分类",
         "- GENERAL_QA: 通用问题（平台规则、使用帮助） → 先调用 searchKnowledge 检索知识库",

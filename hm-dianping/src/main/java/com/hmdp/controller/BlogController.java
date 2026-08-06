@@ -58,6 +58,12 @@ public class BlogController {
         return blogService.queryHotBlog(current);
     }
 
+    @GetMapping("/of/shop/{shopId}")
+    public Result queryBlogByShop(@PathVariable Long shopId,
+                                  @RequestParam(value = "current", defaultValue = "1") Integer current) {
+        return blogService.queryBlogByShopId(shopId, current);
+    }
+
     @GetMapping("/{id}")
     public Result queryBlogById(@PathVariable Long id) {
         return blogService.queryBlogById(id);

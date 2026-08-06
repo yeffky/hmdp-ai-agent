@@ -10,8 +10,9 @@ local userId = ARGV[2]
 local stockKey = 'seckill:stock:' .. voucherId
 local orderKey = 'seckill:order:' .. voucherId
 
--- 判断库存是否充足
-if tonumber(redis.call('get', stockKey)) <= 0 then
+-- 判断库存是否充足（key 缺失时视为 0，避免 nil 比较报错）
+local stock = tonumber(redis.call('get', stockKey))
+if stock == nil or stock <= 0 then
     return 1
 end
 -- 判断是否一人一单

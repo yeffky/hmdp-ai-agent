@@ -49,6 +49,11 @@ public class Voucher implements Serializable {
     private String subTitle;
 
     /**
+     * 团购商品封面图
+     */
+    private String image;
+
+    /**
      * 使用规则
      */
     private String rules;

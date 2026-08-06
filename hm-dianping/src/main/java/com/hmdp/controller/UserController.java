@@ -113,4 +113,31 @@ public class UserController {
     public Result signCount(){
         return userService.signCount();
     }
+
+    /** 今天是否已签到 */
+    @GetMapping("/sign/today")
+    public Result signToday(){
+        return userService.signToday();
+    }
+
+    /** 更新个人资料（仅本人）：city / introduce / gender / birthday */
+    @PutMapping("/info")
+    public Result updateInfo(@RequestBody UserInfo userInfo){
+        Long userId = UserHolder.getUser().getId();
+        if (userInfo.getUserId() == null || !userId.equals(userInfo.getUserId())) {
+            return Result.fail("只能编辑自己的资料");
+        }
+        UserInfo existing = userInfoService.getById(userId);
+        if (existing == null) {
+            // 首次填写资料：补默认值再插入
+            userInfo.setFans(0);
+            userInfo.setFollowee(0);
+            userInfo.setCredits(0);
+            userInfo.setLevel(false);
+            userInfoService.save(userInfo);
+        } else {
+            userInfoService.updateById(userInfo);
+        }
+        return Result.ok();
+    }
 }

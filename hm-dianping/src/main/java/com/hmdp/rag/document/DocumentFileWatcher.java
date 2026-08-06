@@ -141,7 +141,7 @@ public class DocumentFileWatcher {
 
     /** 定时全量扫描：处理应用离线期间的变更 */
     @Scheduled(fixedDelayString = "${rag.document.full-scan-interval-seconds:300}000")
-    void fullScan() {
+    public void fullScan() {
         log.debug("定时全量扫描: {}", watchDir);
         pipeline.processAll(watchDir);
     }

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#E2482D"/>
+  <rect x="8" y="8" width="48" height="48" rx="8" fill="#FFFCF6"/>
+  <path d="M14 22h36" stroke="#E4DCCB" stroke-width="3" stroke-dasharray="5 4"/>
+  <text x="32" y="47" font-family="Nunito, sans-serif" font-weight="900" font-size="30" text-anchor="middle" fill="#E2482D">号</text>
+</svg>

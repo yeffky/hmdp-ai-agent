@@ -3,7 +3,9 @@ package com.hmdp.service.impl;
 import cn.hutool.core.lang.UUID;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.entity.QueueTicket;
+import com.hmdp.entity.Shop;
 import com.hmdp.mapper.QueueTicketMapper;
+import com.hmdp.service.IShopService;
 import com.hmdp.service.IQueueTicketService;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.UserHolder;
@@ -40,6 +42,9 @@ public class QueueTicketServiceImpl extends ServiceImpl<QueueTicketMapper, Queue
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    @Resource
+    private IShopService shopService;
+
     // ========== 取号 ==========
 
     @Override
@@ -48,6 +53,13 @@ public class QueueTicketServiceImpl extends ServiceImpl<QueueTicketMapper, Queue
         if (userId == null) throw new RuntimeException("请先登录");
         if (shopId == null) throw new RuntimeException("商铺ID不能为空");
         if (peopleCount == null || peopleCount < 1) peopleCount = 2;
+
+        // 0. 校验店铺是否支持排队
+        Shop shop = shopService.getById(shopId);
+        if (shop == null) throw new RuntimeException("商铺不存在");
+        if (shop.getQueueEnabled() == null || shop.getQueueEnabled() == 0) {
+            throw new RuntimeException("该商铺暂不支持排队取号");
+        }
 
         String date = today();
         String userKey = RedisConstants.QUEUE_USER_KEY + userId;

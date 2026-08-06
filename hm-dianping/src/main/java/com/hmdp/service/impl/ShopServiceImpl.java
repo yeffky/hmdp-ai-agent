@@ -234,12 +234,15 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     }
 
     @Override
-    public Result queryShopByType(Integer typeId, Integer current, Double x, Double y) {
+    public Result queryShopByType(Integer typeId, Integer current, Double x, Double y, Long districtId, String sortBy) {
         // 1.判断是否根据坐标查询
         if (x == null || y == null) {
-            // 根据类型分页查询
+            // 根据类型分页查询（可按地区过滤、按人气/评分排序）
             Page<Shop> page = query()
+                    .eq(districtId != null, "district_id", districtId)
                     .eq("type_id", typeId)
+                    .orderByDesc("comments".equals(sortBy), "comments")
+                    .orderByDesc("score".equals(sortBy), "score")
                     .page(new Page<>(current, SystemConstants.DEFAULT_PAGE_SIZE));
             return Result.ok(page.getRecords());
         }
@@ -247,12 +250,12 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         // 2.计算分页参数
         int from = (current - 1) * SystemConstants.DEFAULT_PAGE_SIZE;
         int end = current * SystemConstants.DEFAULT_PAGE_SIZE;
-        String key = SHOP_GEO_KEY + typeId;
+        String key = SHOP_GEO_KEY + (districtId == null ? 0 : districtId) + ":" + typeId;
 
         // 3.缓存穿透：Redis geo 为空时从 MySQL 加载
         Long geoSize = stringRedisTemplate.opsForZSet().size(key);
         if (geoSize == null || geoSize == 0) {
-            loadShopsToGeo(typeId, key);
+            loadShopsToGeo(typeId, districtId, key);
         }
 
         // 4.查询redis，根据距离排序分页（GEORADIUS 兼容 Jedis）
@@ -290,9 +293,32 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         return Result.ok(shops);
     }
 
-    /** 缓存穿透：Redis geo 为空时从 MySQL 加载商家坐标 */
-    private void loadShopsToGeo(Integer typeId, String geoKey) {
-        List<Shop> shops = query().eq("type_id", typeId).list();
+    @Override
+    public Result queryShopByName(String name, Integer current, Integer typeId, Long districtId, String sortBy) {
+        Page<Shop> page = query()
+                .eq(districtId != null, "district_id", districtId)
+                .eq(typeId != null && typeId > 0, "type_id", typeId)
+                .like(StrUtil.isNotBlank(name), "name", name)
+                .orderByDesc("comments".equals(sortBy), "comments")
+                .orderByDesc("score".equals(sortBy), "score")
+                .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
+        return Result.ok(page.getRecords());
+    }
+
+    @Override
+    public Result queryShopsForMap(Long districtId, Integer typeId) {
+        List<Shop> shops = query()
+                .eq(districtId != null, "district_id", districtId)
+                .eq(typeId != null && typeId > 0, "type_id", typeId)
+                .list();
+        return Result.ok(shops);
+    }
+
+    /** 缓存穿透：Redis geo 为空时从 MySQL 加载商家坐标（限定地区） */
+    private void loadShopsToGeo(Integer typeId, Long districtId, String geoKey) {        List<Shop> shops = query()
+                .eq(districtId != null, "district_id", districtId)
+                .eq("type_id", typeId)
+                .list();
         if (shops.isEmpty()) return;
         for (Shop shop : shops) {
             if (shop.getX() != null && shop.getY() != null) {

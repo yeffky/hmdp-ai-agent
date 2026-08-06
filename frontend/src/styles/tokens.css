@@ -1,0 +1,67 @@
+/* ============================================================
+   生活优选 · 号票设计系统 — 设计令牌
+   身份：排队号票 / 叫号。纸张、朱红印章、撕票孔线、大号数字。
+   ============================================================ */
+:root {
+  /* 色彩 */
+  --paper: #F4EFE6;            /* 纸底（暖米纸，非奶油白） */
+  --card: #FFFCF6;             /* 票面 / 卡片 */
+  --ink: #2C2620;              /* 主文字（暖墨） */
+  --ink-2: #6E655B;            /* 次级文字 */
+  --ink-3: #A69C90;            /* 弱文字 / 占位 */
+  --line: #E4DCCB;             /* 发丝线 / 撕票孔线 */
+
+  --vermilion: #E2482D;        /* 主色 · 印章朱红（原 #ff6633 的进化） */
+  --vermilion-deep: #C53A22;   /* 按压 / 悬停 */
+  --vermilion-soft: #FBE6DE;   /* 主色淡底 */
+  --amber: #B9812A;            /* 券 · 价格 */
+  --amber-soft: #F6EAD0;       /* 券淡底 */
+  --jade: #1F7A5C;             /* 成功 · 叫号 */
+  --jade-soft: #E1EEE7;        /* 成功淡底 */
+
+  --shadow-card: 0 1px 2px rgba(70, 52, 30, 0.06), 0 10px 26px rgba(70, 52, 30, 0.06);
+  --shadow-pop: 0 4px 16px rgba(70, 52, 30, 0.16);
+
+  /* 字体 */
+  --font-display: 'Nunito', 'PingFang SC', 'HarmonicOS Sans', 'Microsoft YaHei', sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'HarmonicOS Sans',
+    'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
+
+  /* 字号 */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --num-lg: 30px;
+  --num-hero: 56px;
+
+  /* 圆角（票角微弧，克制） */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* 间距 */
+  --gap-xs: 4px;
+  --gap-sm: 8px;
+  --gap-md: 12px;
+  --gap-lg: 16px;
+  --gap-xl: 24px;
+
+  --header-h: 50px;
+  --tabbar-h: 56px;
+
+  /* Element Plus 主色对齐 */
+  --el-color-primary: var(--vermilion);
+  --el-color-primary-light-3: #e8684f;
+  --el-color-primary-light-5: #ec8d79;
+  --el-color-primary-light-7: #f3b6a8;
+  --el-color-primary-light-8: #f7cdc3;
+  --el-color-primary-light-9: #fbe4de;
+  --el-color-primary-dark-2: var(--vermilion-deep);
+  --el-border-radius-base: var(--radius-sm);
+  --el-font-family: var(--font-body);
+}

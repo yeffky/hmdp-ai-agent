@@ -18,5 +18,11 @@ public interface IShopService extends IService<Shop> {
 
     Result update(Shop shop);
 
-    Result queryShopByType(Integer typeId, Integer current, Double x, Double y);
+    Result queryShopByType(Integer typeId, Integer current, Double x, Double y, Long districtId, String sortBy);
+
+    /** 按名称搜索商铺；typeId 限定分类，districtId 限定地区，sortBy 支持 comments/score 服务端排序 */
+    Result queryShopByName(String name, Integer current, Integer typeId, Long districtId, String sortBy);
+
+    /** 地图标注用：按地区（可选分类）返回全部商铺 */
+    Result queryShopsForMap(Long districtId, Integer typeId);
 }

@@ -44,6 +44,11 @@ public class Shop implements Serializable {
     private Long typeId;
 
     /**
+     * 所属地区id（关联 tb_district.id）
+     */
+    private Long districtId;
+
+    /**
      * 商铺图片，多个图片以','隔开
      */
     private String images;
@@ -92,6 +97,11 @@ public class Shop implements Serializable {
      * 营业时间，例如 10:00-22:00
      */
     private String openHours;
+
+    /**
+     * 是否支持排队取号：1=支持，0=不支持
+     */
+    private Integer queueEnabled;
 
     /**
      * 创建时间

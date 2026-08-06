@@ -1,0 +1,67 @@
+/* 基础重置与全局排版 */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+#app { min-height: 100%; }
+img { display: block; max-width: 100%; }
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; }
+ul { margin: 0; padding: 0; list-style: none; }
+input, textarea { font-family: inherit; }
+
+/* 应用外壳：移动优先，宽屏居中成窄栏 */
+.app-shell {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  background: var(--paper);
+  position: relative;
+  box-shadow: 0 0 40px rgba(70, 52, 30, 0.08);
+}
+@media (min-width: 481px) {
+  .app-shell { border-inline: 1px solid var(--line); }
+}
+
+/* 页面滚动容器（底部留出 tabbar 高度） */
+.page {
+  padding-bottom: calc(var(--tabbar-h) + var(--gap-lg));
+  min-height: 100vh;
+}
+.page.no-tabbar { padding-bottom: var(--gap-xl); }
+
+/* 数字排版：号票数字一律用展示字体 */
+.num { font-family: var(--font-display); font-weight: 800; letter-spacing: 0.01em; }
+
+/* 可访问性：可见键盘焦点 */
+:focus-visible {
+  outline: 2px solid var(--vermilion);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* 动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 通用小元素 */
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hairline-b {
+  border-bottom: 1px solid var(--line);
+}

@@ -192,7 +192,7 @@ public class ChatRagController {
         }
         try {
             ChatResponse resp = chatModel.chat(List.of(
-                    SystemMessage.from("你是黑马点评AI客服小黑。友好、专业、简洁。"),
+                    SystemMessage.from("你是生活优选AI客服小优。友好、专业、简洁。"),
                     UserMessage.from(prompt)));
             return resp.aiMessage().text();
         } catch (Exception e) {

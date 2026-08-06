@@ -265,7 +265,7 @@ public class ReactStreamController {
             StringBuilder fullAnswer = new StringBuilder();
             ChatRequest chatRequest = ChatRequest.builder()
                     .messages(List.of(
-                            SystemMessage.from("你是黑马点评AI客服小黑。友好、专业、简洁。"),
+                            SystemMessage.from("你是生活优选AI客服小优。友好、专业、简洁。"),
                             UserMessage.from(prompt)
                     ))
                     .build();
@@ -315,7 +315,7 @@ public class ReactStreamController {
                             log.error("Streaming LLM error, falling back to sync model", error);
                             try {
                                 ChatResponse resp = chatModel.chat(List.of(
-                                        SystemMessage.from("你是黑马点评AI客服小黑。友好、专业、简洁。"),
+                                        SystemMessage.from("你是生活优选AI客服小优。友好、专业、简洁。"),
                                         UserMessage.from(prompt)));
                                 String answer = resp.aiMessage().text();
                                 Map<String, Object> event = new LinkedHashMap<>();

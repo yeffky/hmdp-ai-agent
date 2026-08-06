@@ -12,11 +12,15 @@ import com.baomidou.mybatisplus.extension.service.IService;
  * @author 虎哥
  * @since 2021-12-22
  */
+
 public interface IBlogService extends IService<Blog> {
 
     Result queryBlogById(Long id);
 
     Result queryHotBlog(Integer current);
+
+    /** 按店铺查询关联探店笔记 */
+    Result queryBlogByShopId(Long shopId, Integer current);
 
     Result likeBlog(Long id);
 

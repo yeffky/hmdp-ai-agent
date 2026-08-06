@@ -29,14 +29,15 @@ services:
   rabbitmq:
     image: rabbitmq:3.12-management
     container_name: hmdp-rabbitmq
+    hostname: hmdp-rabbitmq            # 固定节点名：避免重建后当新节点、重算 mnesia/队列索引
     ports:
       - "5670:5672"
       - "15670:15672"
     environment:
-      - RABBITMQ_DEFAULT_USER=hmdp
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER:-hmdp}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS:-change-me}
-    mem_limit: 512m
-    mem_reservation: 128m
+    mem_limit: 1g                       # 原 512m 太紧：水位线488MiB≈上限，节点易被 OOM 杀掉
+    mem_reservation: 256m
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
       - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro

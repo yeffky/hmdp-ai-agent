@@ -23,4 +23,7 @@ public interface IUserService extends IService<User> {
     Result sign();
 
     Result signCount();
+
+    /** 今天是否已签到 */
+    Result signToday();
 }

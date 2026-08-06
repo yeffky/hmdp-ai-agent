@@ -134,6 +134,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     }
 
     @Override
+    public Result signToday() {
+        Long userId = UserHolder.getUser().getId();
+        LocalDateTime now = LocalDateTime.now();
+        String keySuffix = now.format(DateTimeFormatter.ofPattern(":yyyyMM"));
+        String key = USER_SIGN_KEY + userId + keySuffix;
+        int dayOfMonth = now.getDayOfMonth();
+        Boolean signed = stringRedisTemplate.opsForValue().getBit(key, dayOfMonth - 1);
+        return Result.ok(Boolean.TRUE.equals(signed));
+    }
+
+    @Override
     public Result signCount() {
         // 获取用户
         Long userId = UserHolder.getUser().getId();

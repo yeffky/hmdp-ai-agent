@@ -1336,4 +1336,61 @@ CREATE TABLE `tb_queue_ticket`  (
   KEY `idx_user_id` (`user_id`) USING BTREE
 ) ENGINE = InnoDB AUTO_INCREMENT = 1 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact COMMENT = '排队取号';
 
+-- ============================================================
+-- 城市/地区（双城市地图 + Agent 按地区查询）
+-- 坐标系统: GCJ-02（与高德地图一致）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `tb_city` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `name` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '城市名，如 杭州/福州',
+  `sort` int(3) UNSIGNED NOT NULL DEFAULT 0 COMMENT '排序',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT='城市表';
+
+CREATE TABLE IF NOT EXISTS `tb_district` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `city_id` bigint(20) UNSIGNED NOT NULL COMMENT '所属城市 id（关联 tb_city.id）',
+  `name` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '地区名，如 拱墅区/鼓楼区',
+  `center_x` double NOT NULL COMMENT '地区中心经度（GCJ-02）',
+  `center_y` double NOT NULL COMMENT '地区中心纬度（GCJ-02）',
+  `sort` int(3) UNSIGNED NOT NULL DEFAULT 0 COMMENT '排序',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_city` (`city_id`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT='地区表（含地图 GEO 圆心坐标）';
+
+ALTER TABLE `tb_shop` ADD COLUMN `district_id` bigint(20) UNSIGNED NULL DEFAULT NULL COMMENT '所属地区 id（关联 tb_district.id）' AFTER `type_id`;
+ALTER TABLE `tb_shop` ADD INDEX `idx_district_type`(`district_id`, `type_id`);
+
+INSERT INTO `tb_city` (`id`, `name`, `sort`) VALUES (1, '杭州', 1), (2, '福州', 2);
+INSERT INTO `tb_district` (`id`, `city_id`, `name`, `center_x`, `center_y`, `sort`) VALUES
+  (1, 1, '拱墅区', 120.147, 30.325, 1),
+  (2, 2, '鼓楼区', 119.3026, 26.0855, 1);
+
+UPDATE `tb_shop` SET `district_id` = 1 WHERE `district_id` IS NULL AND `x` BETWEEN 120.0 AND 120.3 AND `y` BETWEEN 30.2 AND 30.5;
+
+-- 部分商家可关闭排队（默认支持，保持兼容）
+ALTER TABLE `tb_shop` ADD COLUMN `queue_enabled` tinyint(1) NOT NULL DEFAULT 1 COMMENT '是否支持排队取号：1=支持，0=不支持' AFTER `open_hours`;
+
+-- 团购商品封面图（团购套餐）
+ALTER TABLE `tb_voucher` ADD COLUMN `image` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '团购商品封面图' AFTER `sub_title`;
+
+-- 店铺评论
+CREATE TABLE IF NOT EXISTS `tb_shop_comment` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `shop_id` bigint(20) UNSIGNED NOT NULL COMMENT '商铺id',
+  `user_id` bigint(20) UNSIGNED NOT NULL COMMENT '评论用户id',
+  `content` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '评论内容',
+  `rating` tinyint(1) UNSIGNED NOT NULL DEFAULT 5 COMMENT '评分 1-5',
+  `liked` int(8) UNSIGNED NOT NULL DEFAULT 0 COMMENT '点赞数',
+  `status` tinyint(1) UNSIGNED NOT NULL DEFAULT 0 COMMENT '状态 0正常/1举报/2禁止查看',
+  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_shop` (`shop_id`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '店铺评论';
+
 SET FOREIGN_KEY_CHECKS = 1;

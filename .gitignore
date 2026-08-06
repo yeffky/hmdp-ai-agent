@@ -32,6 +32,11 @@ build/
 # Nginx
 nginx-1.18.0/logs/
 nginx-1.18.0/temp/
+# Vue3 前端构建产物
+frontend/node_modules/
+frontend/dist/
+frontend/.npm-cache/
+nginx-1.18.0/html/hmdp-app/
 
 # OS
 .DS_Store
@@ -41,6 +46,17 @@ Thumbs.db
 # Copy application.example.yaml → application.yaml and fill in your values
 **/application.yaml
 !**/application.example.yaml
+
+# 环境变量（高德 key 等）
+**/.env
+!**/.env.example
+
+# SD 生成图（可用 tools/sd-gen 重新生成，避免提交大体积图片）
+nginx-1.18.0/html/hmdp/imgs/blogs/sd/
+nginx-1.18.0/html/hmdp/imgs/deals/
+
+# 本地服务器运维工具（plink/pscp 二进制 + 本机公钥）
+tools/ssh/
 
 # Generated tokens / secrets
 **/tokens.txt
