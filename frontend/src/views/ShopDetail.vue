@@ -151,18 +151,17 @@ async function seckill(v) {
 async function loadVouchers() {
   try {
     vouchers.value = (await voucherApi.list(shopId.value)) || []
-    // 登录用户：标记已购买的秒杀券（置灰按钮）
+    // 登录用户：标记已购买（存在订单记录）的券 → 置灰按钮
+    // 后端 seckillStatus 返回 count(user_id,voucher_id)>0，因 uk_user_voucher 唯一索引，有订单即不可再买
     if (userStore.isLoggedIn) {
       await Promise.all(
-        vouchers.value
-          .filter((v) => v.type === 1)
-          .map(async (v) => {
-            try {
-              v.bought = !!(await voucherOrderApi.seckillStatus(v.id))
-            } catch {
-              v.bought = false
-            }
-          })
+        vouchers.value.map(async (v) => {
+          try {
+            v.bought = !!(await voucherOrderApi.seckillStatus(v.id))
+          } catch {
+            v.bought = false
+          }
+        })
       )
     }
   } catch {
@@ -187,6 +186,7 @@ async function buy(v) {
     router.push('/login')
     return
   }
+  if (v.bought) return ElMessage.info('您已购买过该券')
   try {
     const orderId = await voucherOrderApi.buy(v.id)
     payOrderId.value = orderId
@@ -350,7 +350,13 @@ async function submitComment() {
                 :disabled="v.bought || stateOf(v) !== 'active' || v.stock < 1"
                 @click="seckill(v)"
               >{{ v.bought ? '已购买' : stateOf(v) === 'ended' ? '已结束' : `限时秒杀${v.stock >= 0 ? ' · 余' + v.stock : ''}` }}</button>
-              <button v-else class="deal__btn" @click="buy(v)">去购买</button>
+              <button
+                v-else
+                class="deal__btn"
+                :class="{ 'is-off': v.bought }"
+                :disabled="v.bought"
+                @click="buy(v)"
+              >{{ v.bought ? '已购买' : '去购买' }}</button>
             </div>
           </div>
         </div>
