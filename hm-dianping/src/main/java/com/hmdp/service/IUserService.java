@@ -26,4 +26,7 @@ public interface IUserService extends IService<User> {
 
     /** 今天是否已签到 */
     Result signToday();
+
+    /** 用 refreshToken 换发新的 access/refresh 双 token（轮换 + 滑动续约） */
+    Result refresh(String refreshToken);
 }

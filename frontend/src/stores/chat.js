@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import streamChat from '../utils/sse'
 import { chatApi } from '../api'
 import router from '../router'
+import { refreshAccessToken, forceLogin } from '../utils/auth'
 import { pushUserMessage, pushAssistantMessage, reduceSSEEvent } from './chatMachine'
 
 export const useChatStore = defineStore('chat', {
@@ -74,18 +75,26 @@ export const useChatStore = defineStore('chat', {
       this.sending = true
       this.pendingTail = this.messages.length
       try {
-        await streamChat({
-          message: msg,
-          token: sessionStorage.getItem('token'),
-          onEvent: (evt) => {
-            this.messages = reduceSSEEvent(this.messages, evt)
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            await streamChat({
+              message: msg,
+              token: sessionStorage.getItem('token'),
+              onEvent: (evt) => {
+                this.messages = reduceSSEEvent(this.messages, evt)
+              }
+            })
+            return
+          } catch (e) {
+            if (!e || e.code !== 401) {
+              this.messages = pushAssistantMessage(this.messages, '网络异常，请稍后再试')
+              return
+            }
+            // 401（accessToken 过期）：先用 refreshToken 续约后重试一次，失败才登出
+            if (attempt === 0 && (await refreshAccessToken())) continue
+            forceLogin()
+            return
           }
-        })
-      } catch (e) {
-        if (e && e.code === 401) {
-          router.push('/login')
-        } else {
-          this.messages = pushAssistantMessage(this.messages, '网络异常，请稍后再试')
         }
       } finally {
         this.sending = false

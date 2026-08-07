@@ -2,7 +2,6 @@ package com.hmdp.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.bean.copier.CopyOptions;
-import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
 import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -13,6 +12,7 @@ import com.hmdp.entity.User;
 import com.hmdp.mapper.UserInfoMapper;
 import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
+import com.hmdp.utils.JwtUtil;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RegexUtils;
 import com.hmdp.utils.SystemConstants;
@@ -22,6 +22,7 @@ import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.Resource;
 import javax.servlet.http.HttpSession;
 
 import java.time.LocalDateTime;
@@ -48,6 +49,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     private final UserInfoMapper userInfoMapper;
     private final StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private JwtUtil jwtUtil;
 
     public UserServiceImpl(UserInfoMapper userInfoMapper, StringRedisTemplate stringRedisTemplate) {
         this.userInfoMapper = userInfoMapper;
@@ -98,22 +102,53 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             user = createUserWithCode(phone);
         }
 
-        // TODO 7.保存用户信息到redis
-
-        // TODO 7.1.随机生成Token作为登录令牌
-        String token = UUID.randomUUID().toString(true);
-        // TODO 7.2.将User转为Hash存储
+        // 7.生成 access + refresh 双 token
         UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
+        String accessToken = jwtUtil.generateAccessToken(user.getId(), userDTO.getNickName(), userDTO.getIcon());
+        String refreshToken = jwtUtil.generateRefreshToken(user.getId());
+        // 8.将 User 转为 Hash 存 Redis（以 refreshToken 为 key，可吊销 + 存会话），TTL 对齐 refresh 有效期
         Map<String, Object> userMap = BeanUtil.beanToMap(userDTO, new HashMap<>(),
                 CopyOptions.create()
                         .setIgnoreNullValue(true)
                         .setFieldValueEditor((filedname, filedValue) -> filedValue.toString()));
-        // TODO 7.3.存储
-        stringRedisTemplate.opsForHash().putAll(LOGIN_USER_KEY + token, userMap);
-        // TODO 7.4.设置token有效期
-        stringRedisTemplate.expire(LOGIN_USER_KEY + token, LOGIN_USER_TTL, TimeUnit.MINUTES);
+        stringRedisTemplate.opsForHash().putAll(LOGIN_REFRESH_KEY + refreshToken, userMap);
+        stringRedisTemplate.expire(LOGIN_REFRESH_KEY + refreshToken, LOGIN_REFRESH_TTL_DAYS, TimeUnit.DAYS);
 
-        return Result.ok(token);
+        Map<String, Object> result = new HashMap<>();
+        result.put("accessToken", accessToken);
+        result.put("refreshToken", refreshToken);
+        return Result.ok(result);
+    }
+
+    @Override
+    public Result refresh(String refreshToken) {
+        if (refreshToken == null || refreshToken.isEmpty()) {
+            return Result.fail("refreshToken 不能为空");
+        }
+        // 1.校验 refreshToken 签名与有效期
+        Long userId = jwtUtil.parseUserId(refreshToken);
+        if (userId == null) {
+            return Result.fail("登录已失效，请重新登录");
+        }
+        // 2.校验 Redis 会话（登出后此处查不到，实现吊销）
+        String key = LOGIN_REFRESH_KEY + refreshToken;
+        Map<Object, Object> userMap = stringRedisTemplate.opsForHash().entries(key);
+        if (userMap.isEmpty()) {
+            return Result.fail("登录已失效，请重新登录");
+        }
+        // 3.轮换 refreshToken：删除旧的，签发新的，续 TTL（滑动，空闲 7 天才过期）
+        stringRedisTemplate.delete(key);
+        UserDTO userDTO = BeanUtil.fillBeanWithMap(userMap, new UserDTO(), false);
+        String newRefresh = jwtUtil.generateRefreshToken(userId);
+        stringRedisTemplate.opsForHash().putAll(LOGIN_REFRESH_KEY + newRefresh, userMap);
+        stringRedisTemplate.expire(LOGIN_REFRESH_KEY + newRefresh, LOGIN_REFRESH_TTL_DAYS, TimeUnit.DAYS);
+        // 4.签发新 accessToken
+        String newAccess = jwtUtil.generateAccessToken(userId, userDTO.getNickName(), userDTO.getIcon());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("accessToken", newAccess);
+        result.put("refreshToken", newRefresh);
+        return Result.ok(result);
     }
 
     @Override

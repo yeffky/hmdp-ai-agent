@@ -8,7 +8,8 @@ import com.hmdp.dto.ChatRequestDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.rag.retrieval.RetrievalService;
 import com.hmdp.repository.ChatHistoryRepository;
-import com.hmdp.utils.RedisConstants;
+import com.hmdp.utils.JwtUtil;
+import com.hmdp.utils.UserResolver;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -17,7 +18,6 @@ import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.RunnableConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
@@ -46,7 +46,7 @@ public class ChatRagController {
     private ChatHistoryRepository chatHistoryRepo;
 
     @Resource
-    private StringRedisTemplate stringRedisTemplate;
+    private JwtUtil jwtUtil;
 
     /** RAG + Agent 模式 */
     @PostMapping("/rag")
@@ -77,7 +77,7 @@ public class ChatRagController {
             return Result.fail("消息不能为空");
         }
 
-        Long userId = resolveUserIdFromRedis(httpRequest);
+        Long userId = UserResolver.resolveUserId(httpRequest, jwtUtil);
         if (userId == null || userId <= 0) {
             return Result.fail("请先登录");
         }
@@ -159,7 +159,7 @@ public class ChatRagController {
             @RequestParam(value = "limit", defaultValue = "10") Integer limit,
             HttpServletRequest httpRequest) {
 
-        Long userId = resolveUserIdFromRedis(httpRequest);
+        Long userId = UserResolver.resolveUserId(httpRequest, jwtUtil);
         if (userId == null || userId <= 0) {
             return Result.fail("请先登录");
         }
@@ -199,27 +199,5 @@ public class ChatRagController {
             log.error("Sync answer generation failed", e);
             return "抱歉，回答生成失败，请稍后重试。";
         }
-    }
-
-    /** 从 Redis 直接获取当前用户 ID（分布式友好，不依赖 ThreadLocal） */
-    private Long resolveUserIdFromRedis(HttpServletRequest request) {
-        try {
-            String token = request.getHeader("authorization");
-            if (token == null || token.isBlank()) {
-                return null;
-            }
-            Map<Object, Object> userMap = stringRedisTemplate.opsForHash()
-                    .entries(RedisConstants.LOGIN_USER_KEY + token);
-            if (userMap.isEmpty()) {
-                return null;
-            }
-            Object idObj = userMap.get("id");
-            if (idObj != null) {
-                return Long.valueOf(idObj.toString());
-            }
-        } catch (Exception e) {
-            log.warn("Failed to resolve userId from Redis: {}", e.getMessage());
-        }
-        return null;
     }
 }

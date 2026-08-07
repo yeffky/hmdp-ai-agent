@@ -2,8 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 // store 用默认导入 streamChat，mock 需同时提供 named + default
-const { mockStreamChat } = vi.hoisted(() => ({ mockStreamChat: vi.fn() }))
+const { mockStreamChat, mockRefresh, mockForceLogin } = vi.hoisted(() => ({
+  mockStreamChat: vi.fn(),
+  mockRefresh: vi.fn(),
+  mockForceLogin: vi.fn()
+}))
 vi.mock('../utils/sse', () => ({ streamChat: mockStreamChat, default: mockStreamChat }))
+vi.mock('../utils/auth', () => ({
+  refreshAccessToken: mockRefresh,
+  forceLogin: mockForceLogin
+}))
 vi.mock('../api', () => ({ chatApi: { history: vi.fn() } }))
 
 import { chatApi } from '../api'
@@ -56,6 +64,40 @@ describe('chat store', () => {
     const store = useChatStore()
     await store.send('hi')
     expect(store.messages[1]).toMatchObject({ role: 'assistant', content: '网络异常，请稍后再试' })
+  })
+
+  it('send() 401 时刷新 token 并用新 token 重试一次', async () => {
+    sessionStorage.setItem('token', 'old')
+    sessionStorage.setItem('refreshToken', 'rt')
+    mockRefresh.mockImplementation(async () => {
+      sessionStorage.setItem('token', 'new')
+      return true
+    })
+    mockStreamChat
+      .mockRejectedValueOnce({ code: 401 })
+      .mockImplementationOnce(async ({ token, onEvent }) => {
+        expect(token).toBe('new')
+        onEvent({ type: 'answer', content: 'ok' })
+      })
+    const store = useChatStore()
+    await store.send('hi')
+    expect(mockRefresh).toHaveBeenCalledOnce()
+    expect(sessionStorage.getItem('token')).toBe('new')
+    expect(mockStreamChat).toHaveBeenCalledTimes(2)
+    expect(store.sending).toBe(false)
+    expect(store.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('send() 401 且刷新失败时登出', async () => {
+    sessionStorage.setItem('token', 'old')
+    sessionStorage.setItem('refreshToken', 'rt')
+    mockRefresh.mockResolvedValue(false)
+    mockStreamChat.mockRejectedValue({ code: 401 })
+    const store = useChatStore()
+    await store.send('hi')
+    expect(mockForceLogin).toHaveBeenCalledOnce()
+    expect(mockStreamChat).toHaveBeenCalledTimes(1)
+    expect(store.sending).toBe(false)
   })
 
   it('loadHistory 翻转服务端降序并按序前置', async () => {

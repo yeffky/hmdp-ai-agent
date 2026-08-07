@@ -2,7 +2,8 @@ package com.hmdp.controller;
 
 import com.hmdp.agent.graph.state.ReActAgentState;
 import com.hmdp.repository.ChatHistoryRepository;
-import com.hmdp.utils.RedisConstants;
+import com.hmdp.utils.JwtUtil;
+import com.hmdp.utils.UserResolver;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.data.message.SystemMessage;
@@ -17,7 +18,6 @@ import org.bsc.langgraph4j.RunnableConfig;
 import org.bsc.async.AsyncGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -47,7 +47,7 @@ public class ReactStreamController {
     private ChatHistoryRepository chatHistoryRepo;
 
     @Resource
-    private StringRedisTemplate stringRedisTemplate;
+    private JwtUtil jwtUtil;
 
     @PostMapping(value = "/react/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamReact(@RequestBody Map<String, String> request,
@@ -60,8 +60,8 @@ public class ReactStreamController {
             return emitter;
         }
 
-        Long userId = resolveUserIdFromRedis(httpRequest);
-        log.info("ReactStreamController: resolved userId={} from Redis", userId);
+        Long userId = UserResolver.resolveUserId(httpRequest, jwtUtil);
+        log.info("ReactStreamController: resolved userId={}", userId);
 
         emitter.onTimeout(() -> log.warn("SSE timeout after 300s for userId={}", userId));
         emitter.onError(e -> log.warn("SSE error for userId={}: {}", userId, e.getMessage()));
@@ -100,7 +100,8 @@ public class ReactStreamController {
                             reactGraph.updateState(config, Map.of(
                                     "userChoice", message,
                                     "pendingConfirmation", false,
-                                    "nextNode", "observer"
+                                    "nextNode", "observer",
+                                    "finalAnswer", ""   // 清掉 ask_user 残留，避免数据足够后仍回复旧问题
                             ), "observer");
                             resumed = true;
                         }
@@ -405,27 +406,6 @@ public class ReactStreamController {
             }
         } catch (Exception ignored) {}
         return "正在分析意图...";
-    }
-
-    private Long resolveUserIdFromRedis(HttpServletRequest request) {
-        try {
-            String token = request.getHeader("authorization");
-            if (token == null || token.isBlank()) {
-                return null;
-            }
-            Map<Object, Object> userMap = stringRedisTemplate.opsForHash()
-                    .entries(RedisConstants.LOGIN_USER_KEY + token);
-            if (userMap.isEmpty()) {
-                return null;
-            }
-            Object idObj = userMap.get("id");
-            if (idObj != null) {
-                return Long.valueOf(idObj.toString());
-            }
-        } catch (Exception e) {
-            log.warn("Failed to resolve userId from Redis: {}", e.getMessage());
-        }
-        return null;
     }
 
     private String buildFallbackAnswer(ReActAgentState state) {

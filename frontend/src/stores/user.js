@@ -30,9 +30,9 @@ export const useUserStore = defineStore('user', {
       else sessionStorage.removeItem('userProfile')
     },
     async login(form) {
-      const token = await userApi.login(form)
-      this.setToken(token)
-      return token
+      const res = await userApi.login(form)
+      this.setToken(res.accessToken)
+      return res
     },
     async logout() {
       try {

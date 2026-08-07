@@ -137,3 +137,10 @@ xxl:
       port: 9999                # 执行器 HTTP 端口
       logpath: ./logs/xxl-job/jobhandler
       logretentiondays: 30
+
+# ========== JWT 登录令牌（secret 需 >= 32 字符；access 短效 / refresh 长效） ==========
+hmdp:
+  jwt:
+    secret: your-jwt-secret-at-least-32-chars
+    access-ttl-minutes: 30      # accessToken 有效期，过期用 refreshToken 续约
+    refresh-ttl-days: 7         # refreshToken 最大有效期

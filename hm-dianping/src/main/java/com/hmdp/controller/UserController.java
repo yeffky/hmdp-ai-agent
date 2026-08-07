@@ -17,9 +17,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
-import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
+import java.util.Map;
 
 /**
  * <p>
@@ -56,26 +56,59 @@ public class UserController {
      * @param loginForm 登录参数，包含手机号、验证码；或者手机号、密码
      */
     @PostMapping("/login")
-    public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session){
-        // TODO 实现登录功能
-        return userService.login(loginForm, session);
+    public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session, HttpServletResponse response){
+        Result result = userService.login(loginForm, session);
+        moveRefreshTokenToCookie(response, result);
+        return result;
     }
 
     /**
-     * 登出功能
-     * @return 无
+     * 登出功能：删除 Redis 会话（吊销 refreshToken）并清掉 HttpOnly cookie
      */
     @PostMapping("/logout")
-    public Result logout(HttpSession session, HttpServletRequest request){
-        // TODO 实现登出功能
-        ThreadLocal threadLocal = new ThreadLocal();
-        threadLocal.remove();
+    public Result logout(HttpSession session, HttpServletResponse response,
+                         @CookieValue(value = "refreshToken", required = false) String refreshToken){
         session.invalidate();
-        String tokenKey = RedisConstants.LOGIN_USER_KEY + request.getHeader("authorization");
-        if (Boolean.TRUE.equals(stringRedisTemplate.hasKey(tokenKey))) {
-            stringRedisTemplate.delete(tokenKey);
+        UserHolder.removeUser();
+        if (refreshToken != null && !refreshToken.isEmpty()) {
+            stringRedisTemplate.delete(RedisConstants.LOGIN_REFRESH_KEY + refreshToken);
         }
+        clearRefreshCookie(response);
         return Result.ok();
+    }
+
+    /** 用 refreshToken 换发新的 access/refresh 双 token（续约）；refreshToken 从 HttpOnly cookie 读取 */
+    @PostMapping("/refresh")
+    public Result refresh(HttpServletResponse response,
+                          @CookieValue(value = "refreshToken", required = false) String refreshToken){
+        Result result = userService.refresh(refreshToken);
+        moveRefreshTokenToCookie(response, result);
+        return result;
+    }
+
+    /**
+     * 续约/登录成功时：把 refreshToken 写入 HttpOnly Cookie（JS 读不到，防 XSS 窃取长效凭证），
+     * 并从响应体剥离，前端只需持有 accessToken。
+     */
+    @SuppressWarnings("unchecked")
+    private void moveRefreshTokenToCookie(HttpServletResponse response, Result result) {
+        if (result.getData() instanceof Map && ((Map<?, ?>) result.getData()).containsKey("refreshToken")) {
+            Map<String, Object> data = (Map<String, Object>) result.getData();
+            setRefreshCookie(response, data.get("refreshToken").toString());
+            data.remove("refreshToken");
+        }
+    }
+
+    private void setRefreshCookie(HttpServletResponse response, String refreshToken) {
+        // 直接拼 Set-Cookie 头（避开 Cookie.setSameSite 的 servlet-api 版本差异）
+        String header = "refreshToken=" + refreshToken
+                + "; HttpOnly; Path=/; SameSite=Lax"  // SameSite 缓解 CSRF；生产 HTTPS 应加 Secure
+                + "; Max-Age=" + (RedisConstants.LOGIN_REFRESH_TTL_DAYS.intValue() * 24 * 3600); // 与 refresh TTL 对齐
+        response.addHeader("Set-Cookie", header);
+    }
+
+    private void clearRefreshCookie(HttpServletResponse response) {
+        response.addHeader("Set-Cookie", "refreshToken=; HttpOnly; Path=/; Max-Age=0");
     }
 
     @GetMapping("/me")
