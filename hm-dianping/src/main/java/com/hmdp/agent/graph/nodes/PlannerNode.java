@@ -1,6 +1,11 @@
 package com.hmdp.agent.graph.nodes;
 
+import com.hmdp.agent.graph.dto.JsonParser;
+import com.hmdp.agent.graph.dto.PlanRequest;
+import com.hmdp.agent.graph.prompt.PromptTemplates;
 import com.hmdp.agent.graph.state.ReActAgentState;
+import com.hmdp.agent.graph.state.StateKeys;
+import com.hmdp.agent.tool.ShopTypeProvider;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.data.message.SystemMessage;
@@ -34,10 +39,11 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
     private final String toolNamesBlock;
 
 
-    public PlannerNode(OpenAiChatModel model, int maxIterations, LC4jToolService toolService) {
+    public PlannerNode(OpenAiChatModel model, int maxIterations,
+                       LC4jToolService toolService, ShopTypeProvider shopTypeProvider) {
         this.model = model;
         this.maxIterations = maxIterations;
-        this.toolListBlock = buildToolListBlock(toolService);
+        this.toolListBlock = buildToolListBlock(toolService, shopTypeProvider);
         this.toolNamesBlock = buildToolNamesBlock(toolService);
     }
 
@@ -134,7 +140,7 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
             String promptStr = prompt.toString();
             log.info("Planner prompt (iter {}, replan={}):\n{}", iter, isReplan, promptStr);
             ChatResponse resp = model.chat(List.of(
-                    SystemMessage.from("你是任务规划器。只输出JSON。先区分用户是「操作请求」（帮我做X）还是「知识问题」（怎么/如何/什么是X）。操作请求超出工具能力才输出cannot_fulfill；知识问题一律用knowledgeRetrieval工具查询。问候/闲聊/常识/建议等无需查数据的问题设为complex=false直接回答。只有确实需要数据库或外部数据且工具有能力时才设complex=true。重规划时必须换思路不重复失败路径。"),
+                    SystemMessage.from(PromptTemplates.PLANNER_SYSTEM),
                     UserMessage.from(promptStr)));
             String raw = resp.aiMessage().text();
             log.info("Planner (iter {}): {}", iter, raw);
@@ -143,20 +149,17 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
             result.put("iteration", iter);
             result.put("planJson", raw);
 
-            boolean isSimple = raw.contains("\"complex\"") && raw.contains("false");
-            boolean askUser = raw.contains("\"ask_user\"");
-            boolean cannotFulfill = raw.contains("\"cannot_fulfill\"");
+            PlanRequest planReq = JsonParser.parsePlan(raw);
 
-            if (cannotFulfill) {
-                String msg = extractJsonStr(raw, "cannot_fulfill");
-                result.put("finalAnswer", msg != null ? msg : "抱歉，我目前无法完成这个操作。");
+            if (planReq != null && hasText(planReq.getCannotFulfill())) {
+                result.put("finalAnswer", planReq.getCannotFulfill());
                 result.put("nextNode", "answer");
-                log.info("Planner: cannot_fulfill detected, routing to answer: {}", msg);
-            } else if (askUser) {
-                String askMsg = extractJsonStr(raw, "ask_user");
-                result.put("finalAnswer", askMsg != null ? askMsg : "请提供更多信息");
+                log.info("Planner: cannot_fulfill detected, routing to answer: {}", planReq.getCannotFulfill());
+            } else if (planReq != null && hasText(planReq.getAskUser())) {
+                result.put("finalAnswer", planReq.getAskUser());
                 result.put("nextNode", "answer");
-            } else if (isSimple) {
+                log.info("Planner: ask_user detected, routing to answer: {}", planReq.getAskUser());
+            } else if (planReq != null && Boolean.FALSE.equals(planReq.getComplex())) {
                 // 闲聊、问候、自我介绍等无需工具的问题 → 直接回答
                 log.info("Planner: simple intent detected, routing to answer");
                 result.put("nextNode", "answer");
@@ -176,13 +179,8 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
         }
     }
 
-    private static String extractJsonStr(String json, String key) {
-        int i = json.indexOf("\"" + key + "\":");
-        if (i < 0) return null;
-        int s = json.indexOf("\"", i + key.length() + 3);
-        if (s < 0) return null;
-        int e = json.indexOf("\"", s + 1);
-        return e > s ? json.substring(s + 1, e) : null;
+    private static boolean hasText(String s) {
+        return s != null && !s.isEmpty();
     }
 
     static String formatToolResults(Map<String, Object> sp) {
@@ -190,7 +188,7 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, Object> e : sp.entrySet()) {
             String k = e.getKey();
-            if (k.startsWith("_") || k.equals("ask_user_missing") || k.equals("error")) continue;
+            if (k.startsWith("_") || k.equals(StateKeys.SP_ASK_USER_MISSING) || k.equals(StateKeys.SP_ERROR)) continue;
             String v = e.getValue() != null ? e.getValue().toString() : "";
             if (v.length() > 800) v = v.substring(0, 800) + "...";
             sb.append(k).append(": ").append(v).append("\n");
@@ -198,7 +196,7 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
         return sb.toString();
     }
 
-    private static String buildToolListBlock(LC4jToolService toolService) {
+    private String buildToolListBlock(LC4jToolService toolService, ShopTypeProvider typeProvider) {
         StringBuilder sb = new StringBuilder("## 可用工具\n\n");
         List<ToolSpecification> specs = toolService.toolSpecifications();
         for (int i = 0; i < specs.size(); i++) {
@@ -225,7 +223,8 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
         sb.append("- 制定计划前，先检查工具所需的 [必填] 参数。如果用户未提供，计划中必须包含获取该参数的步骤。\n");
         sb.append("- 例如：用户给的是商铺名称但工具需要 shopId → 计划中必须先查询商铺ID。\n");
         sb.append("- 如果 [必填] 参数无法通过任何工具获取（如用户地理位置坐标、登录凭证），第一步必须输出 ask_user 向用户索要，不要规划无法执行的步骤。\n");
-        sb.append("- 商家类型映射：geoSearch 的 typeId 是7个大类（1美食/2KTV/3酒店/4酒吧/5咖啡厅/6电影院/7足疗按摩）。用户说的「茶餐厅」「火锅」等具体菜系统统归入美食(typeId=1)，不要规划「查询茶餐厅类型ID」这种步骤，直接用 typeId=1。\n");
+        sb.append("- 商家类型映射（共").append(typeProvider.typeMap().size()).append("类：")
+          .append(typeProvider.typeText()).append("）。用户说的「茶餐厅」「火锅」等具体菜系统统归入美食，不要规划「查询茶餐厅类型ID」这种步骤，直接查美食。\n");
         sb.append("- 写操作确认规则：排队取号(takeQueueNumber)、取消排队(cancelMyQueue) 等写操作必须由用户明确指定目标后才能执行。如果用户没有指定具体商铺，计划中必须先查询并列出选项，最后一步用 ask_user 让用户选择，禁止代用户决定。\n");
         sb.append("- 步骤数量限制：每个计划最多 5 步。复杂任务请优先合并步骤（如同时查多个条件），不要拆成过多小步骤。\n");
         sb.append("- 大结果集防护：用户问「所有」「全部」「哪些」等可能返回大量数据的查询时，工具会自动限制返回 20 条并提示总数。如果总数超过 20，你必须在下一步让用户缩小范围（如加条件、选区域、选类型），禁止逐条遍历全部结果。\n");
@@ -249,7 +248,7 @@ public class PlannerNode implements NodeAction<ReActAgentState> {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, Object> e : sp.entrySet()) {
             String k = e.getKey();
-            if (k.startsWith("_") || k.equals("ask_user_missing") || k.equals("error")) continue;
+            if (k.startsWith("_") || k.equals(StateKeys.SP_ASK_USER_MISSING) || k.equals(StateKeys.SP_ERROR)) continue;
             String v = e.getValue() != null ? e.getValue().toString() : "";
             sb.append(k).append(": ").append(v).append("\n");
         }

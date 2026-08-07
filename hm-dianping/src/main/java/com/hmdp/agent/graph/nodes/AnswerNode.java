@@ -1,6 +1,8 @@
 package com.hmdp.agent.graph.nodes;
 
+import com.hmdp.agent.graph.prompt.PromptTemplates;
 import com.hmdp.agent.graph.state.ReActAgentState;
+import com.hmdp.agent.graph.state.StateKeys;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -57,8 +59,8 @@ public class AnswerNode implements NodeAction<ReActAgentState> {
 
         // 提取最后一次工具调用的参数，帮助 LLM 了解查询范围
         String queryContext = "";
-        Object lastTool = sp.get("_last_tool");
-        Object lastArgs = sp.get("_last_args");
+        Object lastTool = sp.get(StateKeys.SP_LAST_TOOL);
+        Object lastArgs = sp.get(StateKeys.SP_LAST_ARGS);
         if (lastTool != null && lastArgs != null) {
             queryContext = "\n## 查询条件（最后一次工具调用）\n工具: " + lastTool
                     + "\n参数: " + lastArgs + "\n";
@@ -109,7 +111,7 @@ public class AnswerNode implements NodeAction<ReActAgentState> {
         try {
             // 使用 sync 模型快速生成错误回复
             var resp = model.chat(List.of(
-                    SystemMessage.from("你是客服助手，用友好简洁的中文向用户解释问题。不暴露技术细节。"),
+                    SystemMessage.from(PromptTemplates.ERROR_ANSWER_SYSTEM),
                     UserMessage.from(prompt)));
             answer = resp.aiMessage().text().trim();
         } catch (Exception e) {

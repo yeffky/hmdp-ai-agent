@@ -4,6 +4,10 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
+import com.hmdp.agent.graph.error.ToolException;
+import com.hmdp.agent.tool.ShopTypeProvider;
+import com.hmdp.agent.tool.param.ToolParamException;
+import com.hmdp.agent.tool.param.ToolParams;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.slf4j.Logger;
@@ -32,12 +36,22 @@ public class GeoSearchTool {
     @Resource
     private ShopMapper shopMapper;
 
-    @Tool("按地理位置搜索指定类型的商家。商家类型为一级大类：1=美食（含火锅、茶餐厅、日料、烧烤、小吃等所有餐饮）、2=KTV、3=酒店、4=酒吧、5=咖啡厅、6=电影院、7=足疗按摩。用户说的具体菜系（如茶餐厅、火锅）应归类到美食(typeId=1)，不要当作类型名去搜类型表")
+    @Resource
+    private ShopTypeProvider shopTypeProvider;
+
+    @Tool("按地理位置搜索指定类型的商家。类型ID与名称的对应关系见系统提示中的商家类型说明；用户说的具体菜系（如茶餐厅、火锅）应归类到美食，不要当作类型名去搜类型表")
     public String geoSearch(
-            @P("商家类型ID（整数）。可选值：1=美食,2=KTV,3=酒店,4=酒吧,5=咖啡厅,6=电影院,7=足疗按摩。用户说的火锅/茶餐厅/日料等都属于美食(typeId=1)") int typeId,
-            @P("用户当前经度") double x,
-            @P("用户当前纬度") double y,
-            @P("搜索半径（米）") int radius) {
+            @P("商家类型ID（整数）。具体可选值与名称以系统提示的商家类型说明为准。用户说的火锅/茶餐厅/日料等都属于美食") int typeId,
+            @P("用户当前经度（合法范围-180~180，禁止填0,0）") double x,
+            @P("用户当前纬度（合法范围-90~90，禁止填0,0）") double y,
+            @P("搜索半径（米，范围100~50000）") int radius) {
+        ToolParams.typeId(typeId);
+        if (!shopTypeProvider.isValidType(typeId)) {
+            throw new ToolParamException("商家类型ID无效，当前可选类型: " + shopTypeProvider.typeText()
+                    + "（当前为 " + typeId + "）");
+        }
+        ToolParams.lngLat(x, y);
+        ToolParams.radius(radius);
         try {
             String key = SHOP_GEO_KEY + typeId;
 
@@ -74,7 +88,7 @@ public class GeoSearchTool {
             return JSONUtil.toJsonPrettyStr(list);
         } catch (Exception e) {
             log.error("GeoSearch failed", e);
-            throw new com.hmdp.agent.graph.error.ToolException("geoSearch", "Geo搜索失败: " + e.getMessage(), e);
+            throw new ToolException("geoSearch", "Geo搜索失败: " + e.getMessage(), e);
         }
     }
 

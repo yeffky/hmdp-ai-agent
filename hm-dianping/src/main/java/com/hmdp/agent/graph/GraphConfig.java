@@ -66,11 +66,14 @@ public class GraphConfig {
     @Autowired
     private com.hmdp.repository.ChatHistoryRepository chatHistoryRepo;
 
+    @Autowired
+    private com.hmdp.agent.tool.ShopTypeProvider shopTypeProvider;
+
     @Bean("reactGraph")
     public CompiledGraph<ReActAgentState> reactGraph() throws Exception {
         ContextNode contextNode = new ContextNode(windowManager, userStore, chatHistoryRepo);
-        PlannerNode planner = new PlannerNode(model, maxIterations, toolService);
-        ExecutorNode executor = new ExecutorNode(model, toolService, llmErrorClassify);
+        PlannerNode planner = new PlannerNode(model, maxIterations, toolService, shopTypeProvider);
+        ExecutorNode executor = new ExecutorNode(model, toolService, llmErrorClassify, shopTypeProvider);
         ObserverNode observer = new ObserverNode(model, maxIterations);
         JudgeNode judgeNode = new JudgeNode(model);
         AnswerNode answerNode = new AnswerNode(model);
@@ -118,8 +121,9 @@ public class GraphConfig {
                         "answer", "answer",
                         "retryGate", "retryGate"));
 
-        // observer 四路路由：executor（继续执行）/ judgeNode（判断充分性）/ retryGate（错误重试）/ answer（透传）
+        // observer 路由：executor（继续执行）/ judgeNode（判断充分性）/ retryGate（错误重试）/ answer（透传）
         // observer 自环：用于 checkpoint resume 时直接回到 observer 自身
+        // observer→planner：确认恢复时用户回复与上下文不匹配，ObserverNode 返回 nextNode=planner 要求重新规划
         graph.addConditionalEdges("observer",
                 s -> CompletableFuture.completedFuture(
                         s.nextNode() != null ? s.nextNode() : "judgeNode"),
@@ -127,7 +131,8 @@ public class GraphConfig {
                         "judgeNode", "judgeNode",
                         "retryGate", "retryGate",
                         "answer", "answer",
-                        "observer", "observer"));
+                        "observer", "observer",
+                        "planner", "planner"));
 
         // judgeNode 两路路由：answer（充分/需用户补充）/ planner（不足，重新规划）
         graph.addConditionalEdges("judgeNode",

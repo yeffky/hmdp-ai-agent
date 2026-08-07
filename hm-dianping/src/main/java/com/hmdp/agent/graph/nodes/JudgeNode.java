@@ -1,7 +1,9 @@
 package com.hmdp.agent.graph.nodes;
 
 import com.hmdp.agent.graph.error.ErrorCategory;
+import com.hmdp.agent.graph.prompt.PromptTemplates;
 import com.hmdp.agent.graph.state.ReActAgentState;
+import com.hmdp.agent.graph.state.StateKeys;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -41,11 +43,11 @@ public class JudgeNode implements NodeAction<ReActAgentState> {
         // ============================================================
         // Executor 触发的 ask_user / USER_FIXABLE：先尝试 replan，不行再问用户
         // ============================================================
-        boolean executorWantsAskUser = sp.containsKey("ask_user_missing")
+        boolean executorWantsAskUser = sp.containsKey(StateKeys.SP_ASK_USER_MISSING)
                 || ErrorCategory.USER_FIXABLE.name().equals(state.errorCategory());
 
         if (executorWantsAskUser) {
-            String missing = (String) sp.getOrDefault("ask_user_missing", "缺少必要参数");
+            String missing = (String) sp.getOrDefault(StateKeys.SP_ASK_USER_MISSING, "缺少必要参数");
             if (state.replanCount() < 1) {
                 log.info("Judge: executor wants ask_user but replan not yet attempted, routing to planner");
                 return Map.of(
@@ -75,7 +77,7 @@ public class JudgeNode implements NodeAction<ReActAgentState> {
 
         try {
             ChatResponse resp = model.chat(List.of(
-                    SystemMessage.from("你是信息充分性判断器。只输出JSON。"),
+                    SystemMessage.from(PromptTemplates.JUDGE_SYSTEM),
                     UserMessage.from(prompt.toString())));
             String raw = resp.aiMessage().text().trim();
             log.info("Judge verdict: {}", raw);

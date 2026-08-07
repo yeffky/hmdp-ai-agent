@@ -3,7 +3,9 @@ package com.hmdp.agent.graph.nodes;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+import com.hmdp.agent.graph.prompt.PromptTemplates;
 import com.hmdp.agent.graph.state.ReActAgentState;
+import com.hmdp.agent.graph.state.StateKeys;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -47,14 +49,16 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
                 return Map.of("observerReport",
                         "用户回复了「" + userChoice + "」，但与上一个问题「" + prompt + "」无关，需要重新规划。",
                         "nextNode", "planner",
-                        "userChoice", "");  // 清空，避免下次再触发
+                        "userChoice", "",   // 清空，避免下次再触发
+                        "finalAnswer", ""); // 清掉 ask_user 残留，防止续跑后仍回复旧问题
             }
             log.info("Observer: user response validated, continuing from confirmation — {}", userChoice);
             // 用户回复有效 → 写入 scratchpad 供后续 executor 使用，继续当前流程
             Map<String, Object> sp = state.scratchpad();
             sp.put("_user_response", userChoice);
             return Map.of("scratchpad", sp,
-                    "userChoice", "",  // 清空标记
+                    "userChoice", "",   // 清空标记
+                    "finalAnswer", "",  // 清掉 ask_user 残留，防止数据足够后仍回复旧问题
                     "nextNode", "executor");
         }
 
@@ -162,7 +166,7 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
 
         for (Map.Entry<String, Object> e : sp.entrySet()) {
             String k = e.getKey();
-            if (k.startsWith("_") || k.equals("error") || k.equals("ask_user_missing")) continue;
+            if (k.startsWith("_") || k.equals(StateKeys.SP_ERROR) || k.equals(StateKeys.SP_ASK_USER_MISSING)) continue;
             hasContent = true;
             String v = e.getValue() != null ? e.getValue().toString().trim() : "";
             if (v.isEmpty()) continue;
@@ -191,7 +195,7 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
      */
     private static boolean latestResultEmpty(Map<String, Object> sp) {
         if (sp == null || sp.isEmpty()) return true;
-        Object last = sp.get("_last_result");
+        Object last = sp.get(StateKeys.SP_LAST_RESULT);
         if (last == null) return false;
         String v = last.toString().trim();
         return v.isEmpty() || isResultEmptyValue(v);
@@ -222,7 +226,7 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
     private static boolean isToolActuallyExecuted(ReActAgentState state) {
         Map<String, Object> sp = state.scratchpad();
         if (sp == null) return false;
-        Object before = sp.get("_tool_call_count_before");
+        Object before = sp.get(StateKeys.SP_TOOL_CALL_COUNT_BEFORE);
         if (before == null) return false;
         int beforeCount = before instanceof Number ? ((Number) before).intValue() : 0;
         int currentCount = state.toolCallCount();
@@ -246,7 +250,7 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
                 response.length() > 200 ? response.substring(0, 200) : response);
         try {
             ChatResponse resp = model.chat(List.of(
-                    SystemMessage.from("你是对话匹配判断器，只输出 YES 或 NO。"),
+                    SystemMessage.from(PromptTemplates.OBSERVER_VALIDATE_SYSTEM),
                     UserMessage.from(llmPrompt)));
             String result = resp.aiMessage().text().trim().toUpperCase();
             log.info("Observer validation: prompt='{}', response='{}', result={}",
@@ -270,7 +274,7 @@ public class ObserverNode implements NodeAction<ReActAgentState> {
         StringBuilder rawData = new StringBuilder();
         for (Map.Entry<String, Object> e : sp.entrySet()) {
             String k = e.getKey();
-            if (k.startsWith("_") || k.equals("error") || k.equals("ask_user_missing")) continue;
+            if (k.startsWith("_") || k.equals(StateKeys.SP_ERROR) || k.equals(StateKeys.SP_ASK_USER_MISSING)) continue;
             String v = e.getValue() != null ? e.getValue().toString() : "";
             if (v.length() > 8000) v = v.substring(0, 8000) + "...(截断)";
             rawData.append("[").append(k).append("]: ").append(v).append("\n\n");

@@ -3,6 +3,7 @@ package com.hmdp.agent.tool;
 import cn.hutool.json.JSONUtil;
 import com.hmdp.service.IQueueTicketService;
 import com.hmdp.utils.UserHolder;
+import com.hmdp.agent.tool.param.ToolParams;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -22,17 +23,21 @@ public class QueueTicketTool {
 
     @Tool("用户在指定商铺排队取号。需要提供商铺ID和用餐人数，返回排队号和前方等待桌数。如果用户未指定用餐人数则默认为2人。")
     public String takeQueueNumber(
-            @P("商铺ID") Long shopId,
-            @P("用餐人数") Integer peopleCount) {
-        Long userId = getUserId();
-        if (userId == null) {
-            return "用户未登录，无法取号。请告知用户先登录后再取号。";
-        }
+            @P("商铺ID（必填，正整数）") Long shopId,
+            @P("用餐人数（可选，默认2，必须≥1）") Integer peopleCount) {
         if (shopId == null) {
             return "请提供要排队的商铺ID。如果用户没有指明具体商铺，请先让用户选择商铺。";
         }
-        if (peopleCount == null || peopleCount < 1) {
+        ToolParams.positive(shopId, "商铺ID");
+        if (peopleCount != null) {
+            ToolParams.peopleCount(peopleCount);
+        }
+        if (peopleCount == null) {
             peopleCount = 2;
+        }
+        Long userId = getUserId();
+        if (userId == null) {
+            return "用户未登录，无法取号。请告知用户先登录后再取号。";
         }
 
         try {

@@ -1,16 +1,19 @@
 package com.hmdp.agent.graph.error;
 
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
- * 工具错误分类器 —— 将异常/字符串结果映射到 {@link ErrorCategory}。
+ * 工具错误分类器 —— 将异常映射到 {@link ErrorCategory}。
  *
- * <h3>分类策略</h3>
- * <ul>
- *   <li><b>RETRYABLE</b>：网络超时、连接重置、Redis 不可用、查询超时</li>
- *   <li><b>USER_FIXABLE</b>：缺少必填参数、需登录授权</li>
- *   <li><b>FATAL</b>：SQL 错误、schema 不匹配、认证失败、未知异常</li>
- * </ul>
+ * <h3>分类策略（regex-first）</h3>
+ * <ol>
+ *   <li><b>消息正则优先</b>：按异常消息内容匹配关键词（内容信号最可靠，预编译 Pattern 一次构建）</li>
+ *   <li><b>类名兜底</b>：消息无信号时按异常类名匹配（如 TimeoutException、ToolParamException）</li>
+ *   <li>整条 cause chain 逐层检查，都不命中返回 FATAL</li>
+ * </ol>
  *
  * <p>参照 AutoGPT 的两轴分类（HTTP 4xx=fatal / 5xx=retryable）和 LangChain4j
  * {@code ToolExecutionErrorHandler} 的模式。</p>
@@ -19,7 +22,7 @@ public final class ErrorClassifier {
 
     private ErrorClassifier() {}
 
-    // ======== RETRYABLE 关键词 ========
+    // ======== RETRYABLE ========
 
     private static final Set<String> RETRYABLE_CLASSES = Set.of(
             "TimeoutException", "SocketTimeoutException", "ConnectException",
@@ -32,10 +35,10 @@ public final class ErrorClassifier {
             "temporarily unavailable", "暂时不可用", "无法连接"
     );
 
-    // ======== USER_FIXABLE 关键词 ========
+    // ======== USER_FIXABLE ========
 
     private static final Set<String> USER_FIXABLE_CLASSES = Set.of(
-            "IllegalArgumentException"
+            "IllegalArgumentException", "ToolParamException"
     );
 
     private static final Set<String> USER_FIXABLE_MSGS = Set.of(
@@ -45,7 +48,7 @@ public final class ErrorClassifier {
             "参数不能为空", "必须提供", "必须指定", "不确定"
     );
 
-    // ======== FATAL 关键词 ========
+    // ======== FATAL ========
 
     private static final Set<String> FATAL_CLASSES = Set.of(
             "SQLException", "DataAccessException", "DataIntegrityViolationException",
@@ -56,6 +59,19 @@ public final class ErrorClassifier {
             "syntax error", "constraint violation", "unauthorized",
             "OutOfMemory", "column", "does not exist", "schema", "权限"
     );
+
+    // ======== 预编译正则（regex-first 关键：一次构建，逐条匹配） ========
+
+    private static final Pattern USER_FIXABLE_PATTERN = compile(USER_FIXABLE_MSGS);
+    private static final Pattern RETRYABLE_PATTERN = compile(RETRYABLE_MSGS);
+    private static final Pattern FATAL_PATTERN = compile(FATAL_MSGS);
+
+    private static Pattern compile(Set<String> keywords) {
+        String joined = keywords.stream()
+                .map(Pattern::quote)
+                .collect(Collectors.joining("|"));
+        return Pattern.compile(joined, Pattern.CASE_INSENSITIVE);
+    }
 
     // ================================================================
     // 公开 API
@@ -73,9 +89,15 @@ public final class ErrorClassifier {
         Throwable current = throwable;
         while (current != null) {
             String className = current.getClass().getSimpleName();
-            String message = current.getMessage() != null ? current.getMessage().toLowerCase() : "";
+            String message = current.getMessage() != null ? current.getMessage() : "";
 
-            // 1. 按异常类名匹配
+            // 1. 消息正则优先：内容信号最可靠
+            Matcher m = USER_FIXABLE_PATTERN.matcher(message);
+            if (m.find()) return ErrorCategory.USER_FIXABLE;
+            if (RETRYABLE_PATTERN.matcher(message).find()) return ErrorCategory.RETRYABLE;
+            if (FATAL_PATTERN.matcher(message).find()) return ErrorCategory.FATAL;
+
+            // 2. 类名兜底：消息无信号时（如空消息的 TimeoutException）
             for (String retryClass : RETRYABLE_CLASSES) {
                 if (className.contains(retryClass)) {
                     return ErrorCategory.RETRYABLE;
@@ -83,12 +105,10 @@ public final class ErrorClassifier {
             }
             for (String ufClass : USER_FIXABLE_CLASSES) {
                 if (className.contains(ufClass)) {
-                    // IllegalArgumentException 需结合消息判断：参数相关 → USER_FIXABLE，其他 → FATAL
-                    if (className.contains("IllegalArgument")) {
-                        if (message.contains("parameter") || message.contains("参数")
-                                || message.contains("required") || message.contains("必须")) {
-                            return ErrorCategory.USER_FIXABLE;
-                        }
+                    // IllegalArgumentException 类名过于通用：仅当消息含参数类关键词时才算 USER_FIXABLE
+                    if (className.contains("IllegalArgument")
+                            && !(message.contains("parameter") || message.contains("参数")
+                                 || message.contains("required") || message.contains("必须"))) {
                         return ErrorCategory.FATAL;
                     }
                     return ErrorCategory.USER_FIXABLE;
@@ -96,24 +116,6 @@ public final class ErrorClassifier {
             }
             for (String fatalClass : FATAL_CLASSES) {
                 if (className.contains(fatalClass)) {
-                    return ErrorCategory.FATAL;
-                }
-            }
-
-            // 2. 按消息关键词匹配
-            // USER_FIXABLE 优先（参数缺失常伴着 timeout/connection 等词，但本质是用户能修正的）
-            for (String kw : USER_FIXABLE_MSGS) {
-                if (message.contains(kw)) {
-                    return ErrorCategory.USER_FIXABLE;
-                }
-            }
-            for (String kw : RETRYABLE_MSGS) {
-                if (message.contains(kw)) {
-                    return ErrorCategory.RETRYABLE;
-                }
-            }
-            for (String kw : FATAL_MSGS) {
-                if (message.contains(kw)) {
                     return ErrorCategory.FATAL;
                 }
             }

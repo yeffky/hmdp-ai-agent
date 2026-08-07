@@ -1,9 +1,14 @@
 package com.hmdp.agent.graph.nodes;
 
 import com.hmdp.agent.ToolContext;
+import com.hmdp.agent.graph.dto.JsonParser;
+import com.hmdp.agent.graph.dto.ToolCallRequest;
 import com.hmdp.agent.graph.error.ErrorCategory;
 import com.hmdp.agent.graph.error.ErrorClassifier;
+import com.hmdp.agent.graph.prompt.PromptTemplates;
 import com.hmdp.agent.graph.state.ReActAgentState;
+import com.hmdp.agent.graph.state.StateKeys;
+import com.hmdp.agent.tool.ShopTypeProvider;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.TextContent;
@@ -40,15 +45,16 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
     private final String toolSchemaPrompt;
     private final boolean llmErrorClassify;
 
-    public ExecutorNode(OpenAiChatModel model, LC4jToolService toolService, boolean llmErrorClassify) {
+    public ExecutorNode(OpenAiChatModel model, LC4jToolService toolService,
+                        boolean llmErrorClassify, ShopTypeProvider shopTypeProvider) {
         this.model = model;
         this.toolService = toolService;
         this.llmErrorClassify = llmErrorClassify;
-        this.toolSchemaPrompt = buildToolSchemaPrompt();
+        this.toolSchemaPrompt = buildToolSchemaPrompt(shopTypeProvider);
     }
 
     /** 从 ToolSpecification 列表自动生成 prompt 中的工具描述 */
-    private String buildToolSchemaPrompt() {
+    private String buildToolSchemaPrompt(ShopTypeProvider typeProvider) {
         StringBuilder sb = new StringBuilder();
         sb.append("## 可用工具\n\n");
         List<ToolSpecification> specs = toolService.toolSpecifications();
@@ -78,7 +84,8 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
         sb.append("- 如果必填参数缺失且处于 [自动重试] 中，必须先通过扩大搜索来尝试获取参数，不得直接 ask_user\n");
         sb.append("- [必填] 参数必须全部提供，缺一不可！如果没有 [自动重试] 提示且缺少必填参数，输出 ask_user\n");
         sb.append("- 禁止编造参数值！如果用户没有提供某个必填参数的值，且之前的工具结果中也找不到，必须输出 ask_user\n");
-        sb.append("- 商家类型映射：用户说的具体菜系（茶餐厅/火锅/日料/烧烤等）统统归入美食(typeId=1)，不要用菜系名去搜类型表。类型只有7个大类，详见geoSearch工具描述\n");
+        sb.append("- 商家类型映射（共").append(typeProvider.typeMap().size()).append("类：")
+          .append(typeProvider.typeText()).append("）。用户说的具体菜系（茶餐厅/火锅/日料/烧烤等）统统归入美食，不要用菜系名去搜类型表\n");
         sb.append("- 写操作确认规则：如果要调用排队取号(takeQueueNumber)、取消排队(cancelMyQueue) 等写操作工具，且用户没有明确指定操作目标（如具体商铺名或ID），必须输出 ask_user 让用户选择确认，禁止自行从多个结果中挑选一个来执行。\n");
         sb.append("- 如果 [自动重试 2/2] 后仍为空，输出 ask_user，missing 写对用户说的话（如\"抱歉，未找到相关信息\"）\n");
         sb.append("- 当前步骤如果是「告知用户」「让用户选择」等非工具操作，输出 ask_user\n");
@@ -131,7 +138,7 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
         String raw;
         try {
             ChatResponse resp = model.chat(List.of(
-                    SystemMessage.from("你是工具调度器。严格按计划执行。必填参数缺一不可，禁止编造值（如坐标填0）。只输出JSON。"),
+                    SystemMessage.from(PromptTemplates.EXECUTOR_SYSTEM),
                     UserMessage.from(prompt.toString())));
             raw = resp.aiMessage().text().trim();
             log.info("Executor call: {}", raw);
@@ -141,12 +148,12 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                     "_llm_", "{}", "LLM调用异常: " + e.getMessage(), scratchpad);
         }
 
-        String toolName = extractStr(raw, "tool");
-        String argsStr = extractObj(raw, "args");
+        // Step 1b — 结构化解析 LLM 输出（Jackson），替代手写抠 JSON
+        ToolCallRequest call = JsonParser.parseToolCall(raw);
 
-        // Step 2 — ask_user 检测：全部走 checkpoint 确认流程
-        if (toolName.isEmpty() || toolName.equals("ask_user")) {
-            String missing = extractStr(raw, "missing");
+        // Step 2 — ask_user 检测：解析失败或 ask_user 均走 checkpoint 确认流程
+        if (call == null || call.isAskUserRequest()) {
+            String missing = call != null ? call.getMissing() : null;
             String question = (missing != null && !missing.isEmpty())
                     ? missing
                     : "请提供更多信息以便为您查询";
@@ -159,7 +166,30 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                     "nextNode", "answer");
         }
 
+        String toolName = call.getTool().trim();
+        String argsStr = JsonParser.toJson(call.getArgs());
+
         // Step 3 — 执行工具（设置 ToolContext 让工具跨线程读取 userId）
+        return executeTool(state, toolName, argsStr);
+    }
+
+    // ============================================================
+    // 重试模式：跳过 LLM，直接用上次的工具名和参数执行
+    // ============================================================
+    private Map<String, Object> executeRetry(ReActAgentState state) throws Exception {
+        String toolName = state.lastToolName();
+        String argsStr = state.lastToolArgs();
+        log.info("Retry mode: re-executing tool {} with args {}", toolName, argsStr);
+        return executeTool(state, toolName, argsStr);
+    }
+
+    /**
+     * 执行工具并把结果写入 scratchpad；异常统一走 handleError 分类路由。
+     * 正常模式与重试模式共用，避免重复。
+     */
+    private Map<String, Object> executeTool(ReActAgentState state, String toolName, String argsStr) throws Exception {
+        Map<String, Object> scratchpad = state.scratchpad();
+
         ToolExecutionRequest request = ToolExecutionRequest.builder()
                 .name(toolName)
                 .arguments(argsStr)
@@ -178,15 +208,15 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
             String result = extractToolResult(execResult);
 
             // 工具正常返回字符串 = 业务成功，写入 scratchpad
-            String key = "result_" + (scratchpad.size() + 1);
+            String key = StateKeys.SP_RESULT_PREFIX + (scratchpad.size() + 1);
             scratchpad.put(key, result);
-            scratchpad.put("_last_tool", toolName);
-            scratchpad.put("_last_args", argsStr);
-            scratchpad.put("_last_result", result);
+            scratchpad.put(StateKeys.SP_LAST_TOOL, toolName);
+            scratchpad.put(StateKeys.SP_LAST_ARGS, argsStr);
+            scratchpad.put(StateKeys.SP_LAST_RESULT, result);
             String truncated = result.length() > 200 ? result.substring(0, 200) + "..." : result;
             log.info("Tool {} completed, stored as {}: {}", toolName, key, truncated);
             int newCallCount = state.toolCallCount() + 1;
-            scratchpad.put("_tool_call_count_before", state.toolCallCount());
+            scratchpad.put(StateKeys.SP_TOOL_CALL_COUNT_BEFORE, state.toolCallCount());
             return Map.of("scratchpad", scratchpad,
                     "toolCallCount", newCallCount,
                     "retryCount", 0,
@@ -196,69 +226,11 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
                     "nextNode", "observer");
 
         } catch (Exception e) {
-            log.error("Tool execution threw exception for {}", toolName, e);
+            log.error("Tool {} threw exception", toolName, e);
             String errDetail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            scratchpad.put("error", errDetail);
+            scratchpad.put(StateKeys.SP_ERROR, errDetail);
             return handleError(state, ErrorClassifier.classifyException(e),
                     toolName, argsStr, errDetail, scratchpad);
-        } finally {
-            ToolContext.clear();
-        }
-    }
-
-    // ============================================================
-    // 重试模式：跳过 LLM，直接用上次的工具名和参数执行
-    // ============================================================
-    private Map<String, Object> executeRetry(ReActAgentState state) throws Exception {
-        String toolName = state.lastToolName();
-        String argsStr = state.lastToolArgs();
-        Map<String, Object> scratchpad = state.scratchpad();
-
-        log.info("Retry mode: re-executing tool {} with args {}", toolName, argsStr);
-
-        ToolExecutionRequest request = ToolExecutionRequest.builder()
-                .name(toolName)
-                .arguments(argsStr)
-                .build();
-
-        Long uid = state.userId();
-        log.info("ExecutorNode(retry): setting userId={} into ToolContext for tool {}", uid, toolName);
-        ToolContext.setUserId(uid);
-        try {
-            var execResult = toolService.execute(
-                    List.of(request),
-                    InvocationContext.builder().build(),
-                    "toolResults"
-            ).get();
-
-            String result = extractToolResult(execResult);
-
-            // 重试成功
-            String key = "result_" + (scratchpad.size() + 1);
-            scratchpad.put(key, result);
-            scratchpad.put("_last_tool", toolName);
-            scratchpad.put("_last_args", argsStr);
-            scratchpad.put("_last_result", result);
-            log.info("Retry succeeded for tool {}, stored as {}: {}",
-                    toolName, key, result.length() > 200 ? result.substring(0, 200) + "..." : result);
-            int newCallCount = state.toolCallCount() + 1;
-            scratchpad.put("_tool_call_count_before", state.toolCallCount());
-            return Map.of("scratchpad", scratchpad,
-                    "toolCallCount", newCallCount,
-                    "retryCount", 0,
-                    "errorCategory", "",
-                    "lastToolName", "",
-                    "lastToolArgs", "",
-                    "nextNode", "observer");
-
-        } catch (Exception e) {
-            log.error("Retry threw exception for {}", toolName, e);
-            String errDetail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            scratchpad.put("error", errDetail);
-            // 重试过程中抛异常 → 重新分类
-            ErrorCategory cat = ErrorClassifier.classifyException(e);
-            // 如果还是 RETRYABLE，让 retryGate 处理（继续重试或耗尽）
-            return handleError(state, cat, toolName, argsStr, errDetail, scratchpad);
         } finally {
             ToolContext.clear();
         }
@@ -268,24 +240,12 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
     // LLM 辅助错误分类：regex 不确定时调用 LLM 进行语义判断
     // ============================================================
     private ErrorCategory classifyWithLLM(String toolName, String toolArgs, String errorDetail) {
-        String prompt = String.format("""
-                分类以下工具调用的错误：
-
-                工具：%s
-                参数：%s
-                错误：%s
-
-                类别定义：
-                - RETRYABLE: 网络超时、连接断开、服务暂时不可用、限流等可自动重试的瞬态故障
-                - USER_FIXABLE: 缺少参数、参数格式错误、需要登录、权限不足等用户可修正的问题
-                - FATAL: SQL错误、数据损坏、认证失败、系统崩溃等不可恢复的问题
-
-                只输出一个单词：RETRYABLE / USER_FIXABLE / FATAL""",
+        String prompt = String.format(PromptTemplates.ERROR_CLASSIFIER_PROMPT,
                 toolName, toolArgs,
                 errorDetail.length() > 300 ? errorDetail.substring(0, 300) : errorDetail);
         try {
             ChatResponse resp = model.chat(List.of(
-                    SystemMessage.from("你是错误分类器，只输出一个单词。"),
+                    SystemMessage.from(PromptTemplates.ERROR_CLASSIFIER_SYSTEM),
                     UserMessage.from(prompt)));
             String raw = resp.aiMessage().text().trim().toUpperCase();
             log.info("LLM error classify for {}: {} -> {}", toolName, errorDetail.length() > 80
@@ -328,7 +288,7 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
             case USER_FIXABLE -> {
                 log.info("Error categorized as USER_FIXABLE for tool {}, routing to judgeNode", toolName);
                 String ctx = buildErrorContext(state, toolName, errorDetail, "USER_FIXABLE");
-                scratchpad.put("ask_user_missing", errorDetail);
+                scratchpad.put(StateKeys.SP_ASK_USER_MISSING, errorDetail);
                 yield Map.of(
                         "scratchpad", scratchpad,
                         "errorCategory", ErrorCategory.USER_FIXABLE.name(),
@@ -375,39 +335,6 @@ public class ExecutorNode implements NodeAction<ReActAgentState> {
         safe = safe.replaceAll("(?i)(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER)\\s+.*", "[SQL已脱敏]");
         ctx.append("【错误详情】").append(safe).append("\n");
         return ctx.toString();
-    }
-
-    // ======== JSON 解析（保持兼容 LLM 输出格式）========
-
-    private String extractStr(String json, String key) {
-        int i = json.indexOf("\"" + key + "\":");
-        if (i < 0) return "";
-        int s = i + key.length() + 3;
-        while (s < json.length() && json.charAt(s) == ' ') s++;
-        if (s < json.length() && json.charAt(s) == '"') {
-            int e = json.indexOf("\"", s + 1);
-            return e > s ? json.substring(s + 1, e) : "";
-        }
-        int e = s;
-        while (e < json.length() && (Character.isDigit(json.charAt(e)) || json.charAt(e) == '.' || json.charAt(e) == '-')) e++;
-        return e > s ? json.substring(s, e) : "";
-    }
-
-    private String extractObj(String json, String key) {
-        int i = json.indexOf("\"" + key + "\":");
-        if (i < 0) return "{}";
-        int s = i + key.length() + 3;
-        while (s < json.length() && json.charAt(s) == ' ') s++;
-        if (s < json.length() && json.charAt(s) == '{') {
-            int d = 1, e = s + 1;
-            while (e < json.length() && d > 0) {
-                if (json.charAt(e) == '{') d++;
-                else if (json.charAt(e) == '}') d--;
-                e++;
-            }
-            return json.substring(s, e);
-        }
-        return "{}";
     }
 
     private String schemaType(JsonSchemaElement prop) {

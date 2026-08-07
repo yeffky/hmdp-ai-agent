@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.utils.UserHolder;
+import com.hmdp.agent.tool.param.ToolParams;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -22,7 +23,8 @@ public class OrderQueryTool {
     private VoucherOrderMapper voucherOrderMapper;
 
     @Tool("查询当前用户的优惠券订单，返回订单列表。可用于回答用户关于订单的询问。")
-    public String queryMyOrders(@P("可选的状态过滤: 1未支付/2已支付/3已核销/4已取消/5退款中/6已退款，不传则查询全部") Integer status) {
+    public String queryMyOrders(@P("可选的状态过滤（仅限1-6）：1未支付/2已支付/3已核销/4已取消/5退款中/6已退款，不传则查询全部") Integer status) {
+        ToolParams.status(status);
         Long userId = getUserId();
         if (userId == null) {
             return "用户未登录，无法查询订单。请告知用户先登录后再查询订单。";
