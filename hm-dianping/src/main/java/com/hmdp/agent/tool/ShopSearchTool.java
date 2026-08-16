@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.agent.graph.error.ToolException;
+import com.hmdp.utils.IdObfuscator;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.slf4j.Logger;
@@ -15,8 +16,9 @@ import javax.annotation.Resource;
 import java.util.*;
 
 /**
- * 商铺搜索工具 — 按名称搜索商铺，返回 ID + 基本信息。
+ * 商铺搜索工具 — 按名称搜索商铺，返回混淆 ID + 基本信息。
  * 当用户提到具体商铺名称时，应先用此工具查出商铺ID，再进行后续操作。
+ * 返回的 id 为对外混淆 ID（Sqids），回传工具参数时由各工具自动还原。
  */
 @Component
 public class ShopSearchTool {
@@ -26,18 +28,27 @@ public class ShopSearchTool {
     @Resource
     private ShopMapper shopMapper;
 
-    @Tool("按名称搜索商铺，返回匹配的商铺列表（含ID、名称、地址、评分、均价等）。当用户提到具体商铺名称时，必须在调用其他需要shopId的工具之前先用此工具查出商铺ID。")
+    @Resource
+    private IdObfuscator idObfuscator;
+
+    @Tool("按名称搜索商铺，返回匹配的商铺列表（含ID、名称、地址、评分、均价等）。当用户提到具体商铺名称时，必须在调用其他需要shopId的工具之前先用此工具查出商铺ID。默认按用户当前定位地区过滤。")
     public String searchShop(
-            @P("商铺名称关键词，支持模糊匹配。例如用户说'羊老三'，传入'羊老三'即可") String name) {
+            @P("商铺名称关键词，支持模糊匹配。例如用户说'羊老三'，传入'羊老三'即可") String name,
+            @P("地区ID（可选）：1拱墅区/2鼓楼区。不传默认按用户当前定位地区过滤；用户明确要查其它地区时传对应ID") Long districtId) {
         if (name == null || name.isBlank()) {
             return "请提供商铺名称关键词。";
         }
 
         try {
-            List<Shop> shops = shopMapper.selectList(
-                    new QueryWrapper<Shop>()
-                            .like("name", name)
-                            .last("LIMIT 10"));
+            QueryWrapper<Shop> qw = new QueryWrapper<Shop>().like("name", name);
+            // 未指定地区时默认按用户当前定位地区过滤（避免定位福州却搜到杭州的店）
+            Long effectiveDistrict = (districtId != null && districtId > 0)
+                    ? districtId : com.hmdp.agent.ToolContext.getDistrictId();
+            if (effectiveDistrict != null && effectiveDistrict > 0) {
+                qw.eq("district_id", effectiveDistrict);
+            }
+            qw.last("LIMIT 10");
+            List<Shop> shops = shopMapper.selectList(qw);
 
             if (shops.isEmpty()) {
                 return "未找到名称包含「" + name + "」的商铺。请尝试更简短的关键词，或告知用户该商铺可能不存在。";
@@ -46,7 +57,7 @@ public class ShopSearchTool {
             List<Map<String, Object>> list = new ArrayList<>();
             for (Shop shop : shops) {
                 Map<String, Object> item = new LinkedHashMap<>();
-                item.put("id", shop.getId());
+                item.put("id", idObfuscator.encode(shop.getId()));
                 item.put("name", shop.getName());
                 item.put("area", shop.getArea());
                 item.put("address", shop.getAddress());

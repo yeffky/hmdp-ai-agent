@@ -35,6 +35,11 @@ public class CompressionConfig {
         return props.getKeepRecentTokens();
     }
 
+    /** 保留最近 N 轮（真实 user 边界，含 tool 轨迹）不压缩，更早轮次压缩。 */
+    public int getKeepRecentRounds() {
+        return props.getKeepRecentRounds();
+    }
+
     public int getMaxSummaryTokens() {
         return props.getMaxSummaryTokens();
     }

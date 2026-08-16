@@ -3,6 +3,7 @@ package com.hmdp.service.impl;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.Result;
+import com.hmdp.entity.Shop;
 import com.hmdp.entity.ShopComment;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.ShopCommentMapper;
@@ -65,5 +66,25 @@ public class ShopCommentServiceImpl extends ServiceImpl<ShopCommentMapper, ShopC
         // 评分采用"延迟重算"：发评论只累加计数，均分由 ShopScoreRecalcScheduler 定时批量重算
         shopService.update().setSql("comments = comments + 1").eq("id", shopId).update();
         return Result.ok(c.getId());
+    }
+
+    @Override
+    public Result listByUser(Long userId, Integer current, Integer size) {
+        int s = (size == null || size < 1) ? 10 : size;
+        Page<ShopComment> page = query()
+                .eq("user_id", userId)
+                .eq("status", 0)
+                .orderByDesc("create_time")
+                .page(new Page<>(current == null ? 1 : current, s));
+        List<ShopComment> list = page.getRecords();
+        for (ShopComment c : list) {
+            Shop shop = shopService.getById(c.getShopId());
+            if (shop != null) c.setShopName(shop.getName());
+        }
+        Map<String, Object> res = new HashMap<>();
+        res.put("list", list);
+        res.put("total", page.getTotal());
+        res.put("hasMore", page.getCurrent() * page.getSize() < page.getTotal());
+        return Result.ok(res);
     }
 }

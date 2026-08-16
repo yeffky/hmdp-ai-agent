@@ -60,7 +60,7 @@ const TEMPLATES = {
   ]
 }
 
-const ID_BASE = 1000000 // 用大基数 id，避免与既有数据冲突
+let ID_BASE = 1000000 // 用大基数 id，避免与既有数据冲突；可 --id-base 覆盖（如追加新店批次用 4000000）
 
 function sqlEsc(s) {
   return String(s || '').replace(/\\/g, '').replace(/'/g, "''")
@@ -73,7 +73,11 @@ function hash(str) {
 }
 
 function main() {
-  const tsv = readFileSync(resolve(__dirname, 'shops.tsv'), 'utf8')
+  const argv = process.argv
+  const inputFile = argv[argv.indexOf('--input') + 1] || 'shops.tsv'
+  const idBase = argv[argv.indexOf('--id-base') + 1]
+  if (idBase) ID_BASE = Number(idBase)
+  const tsv = readFileSync(resolve(__dirname, inputFile), 'utf8')
   const shops = tsv.split('\n').filter(Boolean).map((line) => {
     const [id, typeId, name, img] = line.split('\t')
     return { id: Number(id), typeId: Number(typeId), name, img }
@@ -90,7 +94,7 @@ function main() {
       const id = ID_BASE + idx++
       const isSeckill = i === 0
       const type = isSeckill ? 1 : 0
-      const img = shop.img && shop.img.startsWith('http') ? shop.img : ''
+      const img = sqlEsc(shop.img || '')   // 用店铺首图（http 或占位图均可渲染），SD 生成图后续替换
       const name = sqlEsc(shop.name)
       const t = sqlEsc(title)
       const st = sqlEsc(subtitle)

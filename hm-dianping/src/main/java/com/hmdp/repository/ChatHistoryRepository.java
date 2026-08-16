@@ -12,6 +12,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Map;
 
 @Repository
 public class ChatHistoryRepository {
@@ -22,14 +23,14 @@ public class ChatHistoryRepository {
     @Qualifier("postgresJdbcTemplate")
     private JdbcTemplate pg;
 
-    public void saveRound(Long userId, String userMessage, String assistantMessage) {
+    public void saveRound(Long userId, String userMessage, String assistantMessage, String cardsJson, String blocksJson) {
         try {
             pg.update(
-                "INSERT INTO tb_chat_history (user_id, user_message, assistant_message) VALUES (?, ?, ?)",
-                userId, userMessage, assistantMessage
+                "INSERT INTO tb_chat_history (user_id, user_message, assistant_message, cards, blocks) VALUES (?, ?, ?, ?::jsonb, ?::jsonb)",
+                userId, userMessage, assistantMessage, cardsJson, blocksJson
             );
-            log.info("Chat history saved: userId={}, msgLen={}, replyLen={}",
-                    userId, userMessage.length(), assistantMessage.length());
+            log.info("Chat history saved: userId={}, msgLen={}, replyLen={}, cards={}, blocks={}",
+                    userId, userMessage.length(), assistantMessage.length(), cardsJson != null, blocksJson != null);
         } catch (Exception e) {
             log.error("Failed to save chat round for user {}: {}", userId, e.getMessage());
         }
@@ -45,14 +46,14 @@ public class ChatHistoryRepository {
         if (beforeId == null) {
             log.info("Chat history query: userId={}, limit={} (latest)", userId, limit);
             result = pg.query(
-                "SELECT id, user_message, assistant_message, create_time FROM tb_chat_history " +
+                "SELECT id, user_message, assistant_message, cards, blocks, create_time FROM tb_chat_history " +
                 "WHERE user_id = ? ORDER BY id DESC LIMIT ?",
                 this::mapRow, userId, limit
             );
         } else {
             log.info("Chat history query: userId={}, beforeId={}, limit={}", userId, beforeId, limit);
             result = pg.query(
-                "SELECT id, user_message, assistant_message, create_time FROM tb_chat_history " +
+                "SELECT id, user_message, assistant_message, cards, blocks, create_time FROM tb_chat_history " +
                 "WHERE user_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
                 this::mapRow, userId, beforeId, limit
             );
@@ -87,7 +88,7 @@ public class ChatHistoryRepository {
         if (words.length == 0) return List.of();
 
         StringBuilder sql = new StringBuilder(
-            "SELECT id, user_message, assistant_message, create_time FROM tb_chat_history WHERE user_id = ? AND (");
+            "SELECT id, user_message, assistant_message, cards, blocks, create_time FROM tb_chat_history WHERE user_id = ? AND (");
         for (int i = 0; i < words.length; i++) {
             if (i > 0) sql.append(" OR ");
             String w = words[i].trim();
@@ -123,6 +124,30 @@ public class ChatHistoryRepository {
         r.setId(rs.getLong("id"));
         r.setUserMessage(rs.getString("user_message"));
         r.setAssistantMessage(rs.getString("assistant_message"));
+        String cardsJson = rs.getString("cards");
+        if (cardsJson != null && !cardsJson.isBlank()) {
+            try {
+                // hutool toList 泛型推断（Class<Map> → T=Map）与 setCards 目标类型（T=Map<String,Object>）冲突，
+                // 先收成 raw List 再转型，避免「不兼容的类型」编译错误
+                @SuppressWarnings({"unchecked", "rawtypes"})
+                java.util.List<Map<String, Object>> cards =
+                        (java.util.List) cn.hutool.json.JSONUtil.toList(cardsJson, java.util.Map.class);
+                r.setCards(cards);
+            } catch (Exception ignored) {
+                // 卡片 JSON 异常不影响历史文本加载
+            }
+        }
+        String blocksJson = rs.getString("blocks");
+        if (blocksJson != null && !blocksJson.isBlank()) {
+            try {
+                @SuppressWarnings({"unchecked", "rawtypes"})
+                java.util.List<Map<String, Object>> blocks =
+                        (java.util.List) cn.hutool.json.JSONUtil.toList(blocksJson, java.util.Map.class);
+                r.setBlocks(blocks);
+            } catch (Exception ignored) {
+                // blocks 结构异常不影响历史文本加载
+            }
+        }
         Timestamp ts = rs.getTimestamp("create_time");
         r.setCreateTime(ts != null ? ts.toLocalDateTime() : null);
         return r;

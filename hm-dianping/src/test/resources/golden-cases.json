@@ -1,0 +1,262 @@
+[
+  {
+    "id": "01",
+    "query": "推荐几家评分高的火锅店",
+    "districtId": 2,
+    "expectTools": true,
+    "mustNotCall": ["query"],
+    "mustContain": ["火锅"],
+    "mustNotExpose": ["SELECT", "INSERT", "UPDATE", "DELETE"]
+  },
+  {
+    "id": "02",
+    "query": "我有哪些待支付订单",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["queryMyOrders"],
+    "mustContain": ["订单"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "03",
+    "query": "拱墅区能带宠物的餐厅",
+    "districtId": 2,
+    "expectTools": true,
+    "mustContain": ["宠物"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "04",
+    "query": "小鱼号酸菜鱼有什么团购套餐",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchShop", "listShopVouchers"],
+    "mustContain": ["团购", "套餐"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "05",
+    "query": "怎么领优惠券",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchKnowledge"],
+    "mustContain": ["券"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "06",
+    "query": "你好，帮我介绍下这个平台",
+    "districtId": 2,
+    "expectTools": false,
+    "mustContain": []
+  },
+  {
+    "id": "07",
+    "query": "附近评分最高的奶茶店是哪家",
+    "districtId": 2,
+    "expectTools": true,
+    "mustContain": ["奶茶"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "08",
+    "query": "帮我在小鱼号酸菜鱼取个号",
+    "districtId": 2,
+    "expectTools": true,
+    "mustNotCall": ["query"],
+    "writeConfirm": true,
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "09",
+    "query": "推荐评分最高的火锅店，我人在福州",
+    "districtId": 2,
+    "expectTools": true,
+    "mustContain": ["火锅"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "10",
+    "query": "找一家评分高的火锅店，再看看它的团购套餐",
+    "districtId": 2,
+    "expectTools": true,
+    "mustNotCall": ["query"],
+    "expectedTools": ["searchShops", "listShopVouchers"],
+    "mustContain": ["火锅"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "11",
+    "query": "帮我在附近火锅店取个号",
+    "districtId": 2,
+    "expectTools": true,
+    "pauseConfirm": true,
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "12",
+    "query": "帮我查查老王烧烤这家店",
+    "districtId": 2,
+    "expectTools": true,
+    "mustContain": [],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "13",
+    "query": "帮我把排队取消了",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["queryMyQueueStatus"],
+    "mustContain": [],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "14",
+    "query": "小鱼号酸菜鱼有什么探店笔记",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["queryShopBlogs"],
+    "mustContain": ["笔记"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "15",
+    "query": "小鱼号酸菜鱼评价怎么样",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["queryShopComments"],
+    "mustContain": ["评价"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "16",
+    "query": "我之前问过什么",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchHistory"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "17",
+    "query": "杭州拱墅区评分高的烧烤",
+    "districtId": 1,
+    "expectTools": true,
+    "mustContain": ["烧烤"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "18",
+    "query": "我的排队进度怎么样",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["queryMyQueueStatus"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "19",
+    "query": "附近有什么KTV",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["geoSearch"],
+    "mustContain": ["KTV"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "20",
+    "query": "怎么退款",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchKnowledge"],
+    "mustContain": ["退款"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "21",
+    "query": "怎么签到",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchKnowledge"],
+    "mustContain": ["签到"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "22",
+    "query": "我的已支付订单有哪些",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["queryMyOrders"],
+    "mustContain": ["订单"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "23",
+    "query": "附近能带宠物的美食店",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchShops"],
+    "mustContain": ["宠物"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "24",
+    "query": "评分最高的海鲜店",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchShops"],
+    "mustContain": ["海鲜"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "25",
+    "query": "看看小鱼号酸菜鱼的评价和团购",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchShop", "queryShopComments", "listShopVouchers"],
+    "mustContain": ["评价"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "26",
+    "query": "小鱼号酸菜鱼的排队情况",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchShop", "queryShopQueueStatus"],
+    "mustContain": ["排队"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "27",
+    "query": "评分9分以上的店有哪些",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["searchShops"],
+    "mustContain": [],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "28",
+    "query": "我的探店笔记",
+    "districtId": 2,
+    "expectTools": true,
+    "expectedTools": ["queryUserBlogs"],
+    "mustContain": ["笔记"],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "29",
+    "query": "推荐个适合聚餐的地方",
+    "districtId": 2,
+    "expectTools": true,
+    "mustContain": [],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  },
+  {
+    "id": "30",
+    "query": "评分超过11分的火锅店有哪些",
+    "districtId": 2,
+    "expectTools": true,
+    "mustNotCall": ["query"],
+    "mustContain": [],
+    "mustNotExpose": ["SELECT", "INSERT"]
+  }
+]

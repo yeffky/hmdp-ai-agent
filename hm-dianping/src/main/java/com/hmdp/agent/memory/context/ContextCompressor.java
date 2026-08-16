@@ -2,8 +2,9 @@ package com.hmdp.agent.memory.context;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import com.hmdp.agent.graph.nodes.Transcript;
 import dev.langchain4j.data.message.*;
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +31,7 @@ public class ContextCompressor {
             Pattern.compile("\\[画像\\]\\s*\\n?\\s*(\\{[\\s\\S]*?\\})\\s*(?:\\n|$)", Pattern.MULTILINE);
 
     @Resource
-    private OpenAiChatModel model;
+    private ChatModel model;
 
     @Resource
     private CompressionConfig config;
@@ -79,18 +80,9 @@ public class ContextCompressor {
             return new CompressionResult(previousSummary, messages);
         }
 
-        // 从末尾向前，找到保留区的分界点
-        int runningTokens = 0;
-        int cutoffIndex = messages.size();
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            String content = messages.get(i).get("content");
-            runningTokens += TokenCounter.count(content);
-            if (runningTokens >= config.getKeepRecentTokens()) {
-                cutoffIndex = i;
-                break;
-            }
-        }
-
+        // 保留区按「真实轮次」对齐：从末尾往前第 keepRecentRounds 个真实 user 为分界，
+        // 其后的完整轨迹（含 tool 结果）保留（供跨轮复用已获取信息），更早轮次压缩。
+        int cutoffIndex = Transcript.nthRealUserIdx(messages, config.getKeepRecentRounds());
         if (cutoffIndex <= 0) {
             return new CompressionResult(previousSummary, messages);
         }
@@ -136,11 +128,7 @@ public class ContextCompressor {
                 case "assistant":
                     sb.append("助手: ").append(content).append("\n");
                     break;
-                case "tool":
-                    sb.append("工具结果: ").append(content).append("\n");
-                    break;
-                default:
-                    sb.append(role).append(": ").append(content).append("\n");
+                // tool 消息（工具执行结果 JSON）不进对话摘要——执行细节压缩后无意义，且会污染意图理解
             }
         }
 
@@ -151,15 +139,15 @@ public class ContextCompressor {
                 + "冲突处理：如果新旧信息矛盾，以用户最近的表述为准，丢弃旧的矛盾信息。\n"
                 + "去重：重复信息只保留一次。\n\n"
                 + "## 任务2：提取用户画像\n"
-                + "从对话中提取用户画像信息和关键事实，以 JSON 格式输出。\n"
-                + "提取内容：偏好口味、预算范围、会员等级、常用地址、活跃时段、设备类型等偏好信息，\n"
-                + "以及用户提供的事实信息：手机号、订单号、收货地址、姓名、身份证号等。\n"
-                + "只提取对话中明确提及或暗示的信息，不要编造。\n\n"
+                + "从对话中提取用户的**稳定偏好**，按以下**固定字段**输出 JSON。只输出有依据的字段，key 严格用给定的，**禁止新增其它字段**：\n"
+                + buildProfileSchemaPrompt()
+                + "不提取会话内的一次性事实（如订单号、排队号、本次查询到的店铺），那些留在摘要里即可。\n"
+                + "冲突处理：如果新旧信息矛盾，以用户最近的表述为准，丢弃旧的矛盾信息。\n\n"
                 + "## 输出格式\n"
                 + "[摘要]\n"
                 + "<压缩后的对话摘要>\n\n"
                 + "[画像]\n"
-                + "<JSON，仅包含有依据的字段，无画像则输出 {}>\n\n";
+                + "<JSON，仅包含上述固定字段，无画像则输出 {}>\n\n";
 
         if (previousSummary != null && !previousSummary.isEmpty()) {
             prompt += "## 之前的摘要\n" + previousSummary + "\n\n";
@@ -180,6 +168,15 @@ public class ContextCompressor {
             return new CompressAndProfileResult(
                     previousSummary != null ? previousSummary : "", null);
         }
+    }
+
+    /** 从固定 schema 生成画像字段提示（约束 LLM 只输出这些 key，避免自由 key 导致画像膨胀）。 */
+    private String buildProfileSchemaPrompt() {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> e : UserStore.PROFILE_SCHEMA.entrySet()) {
+            sb.append("- \"").append(e.getKey()).append("\": ").append(e.getValue()).append("\n");
+        }
+        return sb.toString();
     }
 
     /**

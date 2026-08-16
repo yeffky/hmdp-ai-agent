@@ -30,7 +30,6 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/upload/**",
                         "/voucher/**",
                         "/kb/**",
-                        "/api/deepseek-proxy/**",
                         "/debug/**",
                         "/qdrant-admin.html",
                         "/api/qdrant/admin/**"

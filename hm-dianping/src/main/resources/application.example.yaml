@@ -33,6 +33,12 @@ spring:
     port: 5672
     username: guest
     password: guest
+    # 发布确认：Broker 收到消息后异步回调 ack/nack，配合 ConfirmCallback 感知消息是否真正到达
+    publisher-confirm-type: correlated
+    # 消息不可路由（mandatory=true）时触发 ReturnsCallback 回调
+    publisher-returns: true
+    template:
+      mandatory: true                  # 配合 publisher-returns：消息无法路由到队列时退回并回调
     listener:
       simple:
         acknowledge-mode: manual      # 手动确认
@@ -45,12 +51,15 @@ mybatis-plus:
 logging:
   level:
     com.hmdp: debug
+  pattern:
+    level: "%5p [%X{traceId}]"   # 日志带 traceId，便于按请求串联
 
 deepseek:
   api-key: your-deepseek-api-key
-  # 走本地代理（自动修复 role=function -> role=tool），无需直接调用 DeepSeek
-  base-url: http://localhost:${server.port}/api/deepseek-proxy
-  real-base-url: https://api.deepseek.com  # 代理最终转发的目标
+  # 直连 DeepSeek（LangChain4j 1.16.2 原生发 role=tool，无需代理）
+  base-url: https://api.deepseek.com
+  # 可选：流式模型独立地址（默认回退 base-url）
+  # streaming-base-url: https://api.deepseek.com
   model: deepseek-chat
   temperature: 0.7
   max-tokens: 2000
@@ -91,7 +100,9 @@ rag:
     debounce-seconds: 5
     full-scan-interval-seconds: 300
     watch-file-extensions: pdf,docx,doc,pptx,ppt,xlsx,xls,html,htm,csv,json,xml,epub,md,txt
-    markitdown-command: python -m markitdown
+    # 依赖本地 markitdown：pip install "markitdown[all]"
+    # Windows 下 `python` 在 JVM 进程环境可能解析到 Store stub（报 exit=9009），建议写完整 python 路径
+    markitdown-command: C:/Users/<your-user>/miniconda3/python.exe -m markitdown
     timeout-seconds: 300
 
 # ========== Agent 配置 ==========
@@ -144,3 +155,5 @@ hmdp:
     secret: your-jwt-secret-at-least-32-chars
     access-ttl-minutes: 30      # accessToken 有效期，过期用 refreshToken 续约
     refresh-ttl-days: 7         # refreshToken 最大有效期
+  id-obfuscator:
+    salt: your-random-id-salt-at-least-32-chars   # Sqids 混淆盐：泄露会导致外部可反推 DB ID，务必替换为随机值且不入库/不提交

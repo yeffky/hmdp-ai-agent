@@ -1,9 +1,13 @@
 package com.hmdp.agent.graph;
 
+import com.hmdp.agent.tool.BlogTool;
 import com.hmdp.agent.tool.HistorySearchTool;
 import com.hmdp.agent.tool.KnowledgeRetrievalTool;
 import com.hmdp.agent.tool.OrderQueryTool;
 import com.hmdp.agent.tool.QueueTicketTool;
+import com.hmdp.agent.tool.ShopCommentTool;
+import com.hmdp.agent.tool.ShopQueryTool;
+import com.hmdp.agent.tool.ShopSearchTool;
 import com.hmdp.agent.tool.graph.GeoSearchTool;
 import com.hmdp.agent.tool.graph.Text2SqlTool;
 import dev.langchain4j.agent.tool.ToolSpecification;
@@ -38,6 +42,18 @@ public class ToolRegistry {
     private QueueTicketTool queueTicketTool;
     @Resource
     private HistorySearchTool historySearchTool;
+    @Resource
+    private ShopCommentTool shopCommentTool;
+    @Resource
+    private BlogTool blogTool;
+    @Resource
+    private ShopSearchTool shopSearchTool;
+    @Resource
+    private ShopQueryTool shopQueryTool;
+    @Resource
+    private com.hmdp.agent.tool.AskUserToChooseTool askUserToChooseTool;
+    @Resource
+    private com.hmdp.agent.tool.ShowCardsTool showCardsTool;
 
     @Bean
     public LC4jToolService toolService() {
@@ -48,7 +64,13 @@ public class ToolRegistry {
                         queueTicketTool,
                         text2SqlTool,
                         geoSearchTool,
-                        historySearchTool
+                        historySearchTool,
+                        shopCommentTool,
+                        blogTool,
+                        shopSearchTool,
+                        shopQueryTool,
+                        askUserToChooseTool,
+                        showCardsTool
                 );
 
         LC4jToolService service = new LC4jToolService(builder.toolMap());

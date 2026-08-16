@@ -8,6 +8,7 @@ import com.hmdp.entity.Blog;
 import com.hmdp.entity.User;
 import com.hmdp.service.IBlogService;
 import com.hmdp.service.IUserService;
+import com.hmdp.utils.IdObfuscator;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
 import org.springframework.web.bind.annotation.*;
@@ -29,6 +30,9 @@ public class BlogController {
 
     @Resource
     private IBlogService blogService;
+
+    @Resource
+    private IdObfuscator idObfuscator;
 
 
     @PostMapping
@@ -53,15 +57,28 @@ public class BlogController {
         return Result.ok(records);
     }
 
+    /** 按用户分页查询其发布的笔记（他人主页/个人主页笔记 tab 用） */
+    @GetMapping("/of/user")
+    public Result queryBlogByUser(@RequestParam("id") Long userId,
+                                  @RequestParam(value = "current", defaultValue = "1") Integer current) {
+        Page<Blog> page = blogService.query()
+                .eq("user_id", userId).page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
+        return Result.ok(page.getRecords());
+    }
+
     @GetMapping("/hot")
     public Result queryHotBlog(@RequestParam(value = "current", defaultValue = "1") Integer current) {
         return blogService.queryHotBlog(current);
     }
 
     @GetMapping("/of/shop/{shopId}")
-    public Result queryBlogByShop(@PathVariable Long shopId,
+    public Result queryBlogByShop(@PathVariable String shopId,
                                   @RequestParam(value = "current", defaultValue = "1") Integer current) {
-        return blogService.queryBlogByShopId(shopId, current);
+        Long realShopId = idObfuscator.decodeOrId(shopId);
+        if (realShopId == null) {
+            return Result.fail("店铺不存在");
+        }
+        return blogService.queryBlogByShopId(realShopId, current);
     }
 
     @GetMapping("/{id}")

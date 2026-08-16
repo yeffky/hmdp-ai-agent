@@ -54,4 +54,8 @@ public class ShopComment implements Serializable {
     /** 评论用户头像（接口补全，非表字段） */
     @TableField(exist = false)
     private String icon;
+
+    /** 所属店铺名称（接口补全，非表字段） */
+    @TableField(exist = false)
+    private String shopName;
 }

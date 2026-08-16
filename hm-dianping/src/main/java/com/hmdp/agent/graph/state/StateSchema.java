@@ -1,5 +1,6 @@
 package com.hmdp.agent.graph.state;
 
+import com.hmdp.agent.graph.NodeNames;
 import org.bsc.langgraph4j.state.Channel;
 import org.bsc.langgraph4j.state.Channels;
 import org.bsc.langgraph4j.state.Reducer;
@@ -64,30 +65,37 @@ public final class StateSchema {
 
     public static final Channel<String> SESSION_ID          = lww("");
     public static final Channel<String> USER_QUERY          = lww("");
-    public static final Channel<String> PLAN_JSON           = lww("");
-    public static final Channel<String> REMAIN_PLAN         = lww("");
+    public static final Channel<String> PLAN                 = lww("");
+    public static final Channel<String> SELECTED_SKILLS      = lww("");
     public static final Channel<String> FINAL_ANSWER        = lww("");
-    public static final Channel<String> NEXT_NODE           = lww("context");
+    public static final Channel<String> NEXT_NODE           = lww(NodeNames.CONTEXT);
     public static final Channel<String> COMPRESSED_SUMMARY  = lww("");
-    public static final Channel<String> OBSERVER_FEEDBACK   = lww("");
-    public static final Channel<String> OBSERVER_REPORT     = lww("");
+    public static final Channel<String> ROUND_EVIDENCE      = lww("");
     public static final Channel<String> CONTEXT_BLOCK       = lww("");
+    public static final Channel<String> CONTEXT_BLOCK_NO_HISTORY = lww("");
     public static final Channel<String> STREAMING_PROMPT    = lww("");
-    public static final Channel<Integer> ITERATION          = lww(0);
-    public static final Channel<Integer> TOOL_FAILURES       = lww(0);
-    public static final Channel<Integer> RETRY_COUNT         = lww(0);
     public static final Channel<String>  ERROR_CATEGORY      = lww("");
     public static final Channel<String>  LAST_TOOL_NAME      = lww("");
     public static final Channel<String>  LAST_TOOL_ARGS      = lww("");
-    public static final Channel<Integer> FATAL_ERROR_COUNT   = lww(0);
     public static final Channel<Long>    USER_ID              = lww(0L);
+    public static final Channel<String>  USER_LOCATION        = lww("");
+    public static final Channel<Long>    USER_DISTRICT_ID     = lww(0L);
     public static final Channel<String>  ERROR_CONTEXT        = lww("");
-    public static final Channel<Integer> EMPTY_RESULT_RETRIES = lww(0);
-    public static final Channel<Integer> REPLAN_COUNT         = lww(0);
-    public static final Channel<Integer> TOOL_CALL_COUNT       = lww(0);
     public static final Channel<Boolean> PENDING_CONFIRMATION  = lww(false);
     public static final Channel<String>  CONFIRMATION_PROMPT   = lww("");
     public static final Channel<String>  USER_CHOICE           = lww("");
+    public static final Channel<String>  PENDING_WRITE          = lww("");
+    public static final Channel<String>  PENDING_OPTIONS        = lww("");
+
+    /**
+     * 轮次计数器（单一 Map channel，last-write-wins）—— 收敛 iteration/replanCount/
+     * toolCallCount/emptyResultRetries 等散落标量，轮间由 ContextNode 统一重置。
+     */
+    @SuppressWarnings("unchecked")
+    public static final Channel<Map<String, Object>> COUNTERS = Channels.base(
+            (Reducer<Map<String, Object>>) (oldVal, newVal) -> newVal,
+            (java.util.function.Supplier<Map<String, Object>>) LinkedHashMap::new
+    );
 
     // ======== Channel Map ========
 
@@ -97,30 +105,28 @@ public final class StateSchema {
         channels.put("scratchpad",        SCRATCHPAD);
         channels.put("sessionId",         SESSION_ID);
         channels.put("userQuery",         USER_QUERY);
-        channels.put("planJson",          PLAN_JSON);
-        channels.put("remainPlan",        REMAIN_PLAN);
+        channels.put("plan",              PLAN);
+        channels.put("selectedSkills",    SELECTED_SKILLS);
         channels.put("finalAnswer",       FINAL_ANSWER);
         channels.put("nextNode",          NEXT_NODE);
         channels.put("compressedSummary", COMPRESSED_SUMMARY);
-        channels.put("observerFeedback",  OBSERVER_FEEDBACK);
-        channels.put("observerReport",    OBSERVER_REPORT);
+        channels.put("roundEvidence",     ROUND_EVIDENCE);
         channels.put("contextBlock",      CONTEXT_BLOCK);
+        channels.put("contextBlockNoHistory", CONTEXT_BLOCK_NO_HISTORY);
         channels.put("streamingPrompt",  STREAMING_PROMPT);
-        channels.put("iteration",         ITERATION);
-        channels.put("toolFailures",       TOOL_FAILURES);
-        channels.put("retryCount",         RETRY_COUNT);
         channels.put("errorCategory",      ERROR_CATEGORY);
         channels.put("lastToolName",       LAST_TOOL_NAME);
         channels.put("lastToolArgs",       LAST_TOOL_ARGS);
-        channels.put("fatalErrorCount",    FATAL_ERROR_COUNT);
         channels.put("userId",             USER_ID);
+        channels.put("userLocation",       USER_LOCATION);
+        channels.put("userDistrictId",     USER_DISTRICT_ID);
         channels.put("errorContext",       ERROR_CONTEXT);
-        channels.put("emptyResultRetries", EMPTY_RESULT_RETRIES);
-        channels.put("replanCount",        REPLAN_COUNT);
-        channels.put("toolCallCount",       TOOL_CALL_COUNT);
         channels.put("pendingConfirmation", PENDING_CONFIRMATION);
         channels.put("confirmationPrompt",  CONFIRMATION_PROMPT);
         channels.put("userChoice",          USER_CHOICE);
+        channels.put("pendingWrite",        PENDING_WRITE);
+        channels.put("pendingOptions",      PENDING_OPTIONS);
+        channels.put("counters",            COUNTERS);
         return channels;
     }
 }

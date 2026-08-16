@@ -6,6 +6,7 @@ import com.hmdp.entity.DeadOrder;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.DeadOrderMapper;
 import com.hmdp.service.IDeadOrderService;
+import com.hmdp.utils.SeckillCorrelationData;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
@@ -43,8 +44,9 @@ public class DeadOrderServiceImpl extends ServiceImpl<DeadOrderMapper, DeadOrder
                     // 重置重试预算，重新走完整消费流程
                     msg.getMessageProperties().setHeader("x-retry-count", 0);
                     return msg;
-                });
-
+                },
+                // 携带 CorrelationData：重放消息发布失败时同样可回补 Redis 预留
+                new SeckillCorrelationData(voucherOrder));
         deadOrder.setStatus(1);
         updateById(deadOrder);
         log.info("死信订单已手动重放: orderId={}, userId={}, voucherId={}",

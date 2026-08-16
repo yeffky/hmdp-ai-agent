@@ -81,4 +81,27 @@ describe('buildShopParams', () => {
   it('分页透传 current', () => {
     expect(buildShopParams({ type: '1' }, types, 3).current).toBe(3)
   })
+
+  it('美食细分：fc 透传为 foodCategory', () => {
+    expect(buildShopParams({ type: '1', name: '美食', fc: '火锅' }, types, 1, '', loc)).toEqual({
+      current: 1,
+      typeId: 1,
+      districtId: 2,
+      foodCategory: '火锅'
+    })
+  })
+
+  it('美食细分：搜索时也透传 foodCategory', () => {
+    expect(buildShopParams({ type: '1', name: '美食', q: '牛', fc: '快餐小吃' }, types, 1, '', loc)).toEqual({
+      current: 1,
+      name: '牛',
+      typeId: 1,
+      districtId: 2,
+      foodCategory: '快餐小吃'
+    })
+  })
+
+  it('美食细分：无 fc 时不带 foodCategory', () => {
+    expect(buildShopParams({ type: '1', name: '美食' }, types, 1, '', loc)).not.toHaveProperty('foodCategory')
+  })
 })

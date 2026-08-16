@@ -19,6 +19,9 @@ public class PlanRequest {
     /** 执行计划步骤 */
     private List<String> plan;
 
+    /** 本次要使用的技能名列表（Planner 语义选择，如 ["shop","queue"]），决定 Agent 暴露哪些工具 */
+    private List<String> skills;
+
     /** ask_user：需要用户补充的信息 */
     @JsonProperty("ask_user")
     private String askUser;
@@ -33,6 +36,8 @@ public class PlanRequest {
     public void setComplex(Boolean complex) { this.complex = complex; }
     public List<String> getPlan() { return plan; }
     public void setPlan(List<String> plan) { this.plan = plan; }
+    public List<String> getSkills() { return skills; }
+    public void setSkills(List<String> skills) { this.skills = skills; }
     public String getAskUser() { return askUser; }
     public void setAskUser(String askUser) { this.askUser = askUser; }
     public String getCannotFulfill() { return cannotFulfill; }

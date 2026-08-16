@@ -4,6 +4,40 @@ import { chatApi } from '../api'
 import router from '../router'
 import { refreshAccessToken, forceLogin } from '../utils/auth'
 import { pushUserMessage, pushAssistantMessage, reduceSSEEvent } from './chatMachine'
+import { useLocationStore } from './location'
+
+// 当前登录用户标识（切账号隔离用）：从 sessionStorage 解析，避免引入 user store 造成循环依赖
+function currentUserId() {
+  try {
+    const p = JSON.parse(sessionStorage.getItem('userProfile') || 'null')
+    return p && p.id != null ? String(p.id) : null
+  } catch {
+    return null
+  }
+}
+
+// 历史回答重建为 blocks：优先用后端持久化的 blocks（text/card 顺序 → 卡片插到对应位置），
+// 无 blocks（旧数据）回退为 [text, cards]（卡片堆末尾）
+function buildHistoryBlocks(r) {
+  const byId = {}
+  for (const c of r.cards || []) byId[String(c.id)] = c
+  if (Array.isArray(r.blocks) && r.blocks.length) {
+    const out = []
+    for (const b of r.blocks) {
+      if (b.type === 'text' && b.text) out.push({ type: 'text', value: b.text })
+      else if (b.type === 'card') {
+        const card = byId[String(b.id)]
+        if (card) out.push({ type: 'cards', cards: [card] })
+      }
+    }
+    if (!out.length && r.assistantMessage) out.push({ type: 'text', value: r.assistantMessage })
+    return out
+  }
+  return [
+    ...(r.assistantMessage ? [{ type: 'text', value: r.assistantMessage }] : []),
+    ...(Array.isArray(r.cards) && r.cards.length ? [{ type: 'cards', cards: r.cards }] : [])
+  ]
+}
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
@@ -14,7 +48,8 @@ export const useChatStore = defineStore('chat', {
     loadingHistory: false,
     hasMore: true,
     oldestId: null,
-    pendingTail: 0 // 当前发送轮次的起始下标，用于滚动定位
+    pendingTail: 0, // 当前发送轮次的起始下标，用于滚动定位
+    loadedForUser: null // 已加载历史的用户 id，用于切账号时清空重建
   }),
   getters: {
     isLoggedIn: () => !!sessionStorage.getItem('token')
@@ -28,12 +63,20 @@ export const useChatStore = defineStore('chat', {
         router.push('/login')
         return
       }
-      this.show = true
-      if (this.messages.length === 0) {
+      // 切账号隔离：内存里若是上一个用户的对话，先清空再按当前用户加载
+      const uid = currentUserId()
+      if (uid && this.loadedForUser !== uid) {
+        this.loadedForUser = uid
+        this.messages = []
+        this.oldestId = null
+        this.hasMore = true
+        this.loadHistory()
+      } else if (this.messages.length === 0) {
         this.oldestId = null
         this.hasMore = true
         this.loadHistory()
       }
+      this.show = true
     },
     close() {
       this.show = false
@@ -53,7 +96,12 @@ export const useChatStore = defineStore('chat', {
           for (let i = serverRounds.length - 1; i >= 0; i--) {
             const r = serverRounds[i]
             newMessages.push({ id: `h${r.id}u`, role: 'user', content: r.userMessage })
-            newMessages.push({ id: `h${r.id}a`, role: 'assistant', content: r.assistantMessage })
+            // 历史重建：优先用后端 blocks（text/card 顺序 → 卡片对应位置），无 blocks 回退 [text, cards]
+            newMessages.push({
+              id: `h${r.id}a`,
+              role: 'assistant',
+              blocks: buildHistoryBlocks(r)
+            })
           }
           this.oldestId = serverRounds[serverRounds.length - 1].id
           this.messages = [...newMessages, ...this.messages]
@@ -77,9 +125,13 @@ export const useChatStore = defineStore('chat', {
       try {
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
+            const loc = useLocationStore()
             await streamChat({
               message: msg,
               token: sessionStorage.getItem('token'),
+              centerX: loc.centerX,
+              centerY: loc.centerY,
+              districtId: loc.districtId,
               onEvent: (evt) => {
                 this.messages = reduceSSEEvent(this.messages, evt)
               }

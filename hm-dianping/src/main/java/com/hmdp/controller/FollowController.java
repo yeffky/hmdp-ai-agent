@@ -37,4 +37,16 @@ public class FollowController {
         return followService.folllowCommons(id);
 
     }
+
+    /** 我关注的人（当前登录用户） */
+    @GetMapping("/my")
+    public Result followMy() {
+        return followService.followMy();
+    }
+
+    /** 我的粉丝（关注了我的人） */
+    @GetMapping("/fans")
+    public Result followFans() {
+        return followService.followFans();
+    }
 }

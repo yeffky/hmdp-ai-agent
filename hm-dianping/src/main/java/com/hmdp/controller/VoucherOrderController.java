@@ -46,6 +46,12 @@ public class VoucherOrderController {
         return voucherOrderService.cancelOrder(orderId);
     }
 
+    /** 退款：已支付且未核销的订单 */
+    @PutMapping("/refund/{orderId}")
+    public Result refund(@PathVariable("orderId") Long orderId) {
+        return voucherOrderService.refundOrder(orderId);
+    }
+
     /** 我的订单列表 */
     @GetMapping("/my")
     public Result myOrders() {

@@ -4,6 +4,7 @@ package com.hmdp.controller;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Voucher;
 import com.hmdp.service.IVoucherService;
+import com.hmdp.utils.IdObfuscator;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
@@ -22,6 +23,9 @@ public class VoucherController {
 
     @Resource
     private IVoucherService voucherService;
+
+    @Resource
+    private IdObfuscator idObfuscator;
 
     /**
      * 删除优惠券
@@ -56,11 +60,15 @@ public class VoucherController {
 
     /**
      * 查询店铺的优惠券列表
-     * @param shopId 店铺id
+     * @param shopId 店铺id（对外混淆 ID 或数据库真实 ID，兼容）
      * @return 优惠券列表
      */
     @GetMapping("/list/{shopId}")
-    public Result queryVoucherOfShop(@PathVariable("shopId") Long shopId) {
-       return voucherService.queryVoucherOfShop(shopId);
+    public Result queryVoucherOfShop(@PathVariable("shopId") String shopId) {
+        Long realShopId = idObfuscator.decodeOrId(shopId);
+        if (realShopId == null) {
+            return Result.fail("店铺不存在");
+        }
+        return voucherService.queryVoucherOfShop(realShopId);
     }
 }

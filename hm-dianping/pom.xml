@@ -53,6 +53,13 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- Sqids：对外短 ID 混淆（数据库自增 ID 不直接暴露给前端/LLM） -->
+        <dependency>
+            <groupId>org.sqids</groupId>
+            <artifactId>sqids</artifactId>
+            <version>0.1.0</version>
+        </dependency>
+
         <!-- xxl-job 分布式任务调度执行器 -->
         <dependency>
             <groupId>com.xuxueli</groupId>
@@ -129,6 +136,12 @@
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+        <!-- JDK HttpClient 实现（open-ai 的 optional 传递依赖，需显式声明才能在编译期使用 JdkHttpClientBuilder 配置 HTTP/1.1） -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-http-client-jdk</artifactId>
             <version>${langchain4j.version}</version>
         </dependency>
         <!-- Gson 版本锁定 — 防止传递依赖覆盖 -->

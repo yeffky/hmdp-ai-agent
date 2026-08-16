@@ -1,18 +1,15 @@
 package com.hmdp.controller;
 
-import com.hmdp.agent.CustomerServiceAgent;
+import com.hmdp.agent.graph.GraphInputFactory;
 import com.hmdp.agent.graph.state.ReActAgentState;
-import com.hmdp.agent.guard.ReflectionGuard;
+import com.hmdp.agent.graph.state.StateKeys;
 import com.hmdp.dto.ChatHistoryRound;
 import com.hmdp.dto.ChatRequestDTO;
 import com.hmdp.dto.Result;
-import com.hmdp.rag.retrieval.RetrievalService;
 import com.hmdp.repository.ChatHistoryRepository;
 import com.hmdp.utils.JwtUtil;
 import com.hmdp.utils.UserResolver;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.RunnableConfig;
@@ -30,44 +27,20 @@ public class ChatRagController {
 
     private static final Logger log = LoggerFactory.getLogger(ChatRagController.class);
 
-    @Resource
-    private CustomerServiceAgent agent;
-
-    @Resource
-    private RetrievalService retrievalService;
-
     @Resource(name = "reactGraph")
     private CompiledGraph<ReActAgentState> reactGraph;
 
     @Resource
-    private OpenAiChatModel chatModel;
+    private ChatModel chatModel;
 
     @Resource
     private ChatHistoryRepository chatHistoryRepo;
 
     @Resource
-    private JwtUtil jwtUtil;
+    private com.hmdp.agent.memory.context.AnswerInjection answerInjection;
 
-    /** RAG + Agent 模式 */
-    @PostMapping("/rag")
-    public Result ragChat(@RequestBody ChatRequestDTO request) {
-        if (request.getSessionId() == null || request.getSessionId().trim().isEmpty()) {
-            return Result.fail("会话ID不能为空");
-        }
-        if (request.getMessage() == null || request.getMessage().trim().isEmpty()) {
-            return Result.fail("消息不能为空");
-        }
-        try {
-            String context = retrievalService.searchAsContext(request.getMessage());
-            String msg = context.isEmpty() ? request.getMessage()
-                    : context + "\n\n# 用户问题\n" + request.getMessage();
-            String reply = agent.chat(request.getSessionId(), msg);
-            return Result.ok(ReflectionGuard.apply(reply));
-        } catch (Exception e) {
-            log.error("RAG chat error", e);
-            return Result.fail("AI客服暂时不可用");
-        }
-    }
+    @Resource
+    private JwtUtil jwtUtil;
 
     /** ReAct Graph 模式 — 强制登录，从 Redis 获取 userId */
     @PostMapping("/react")
@@ -85,18 +58,9 @@ public class ChatRagController {
         try {
             String threadId = "user:" + userId;
 
-            Map<String, Object> init = new LinkedHashMap<>();
-            init.put("sessionId", threadId);
-            init.put("userQuery", request.getMessage());
-            init.put("iteration", 0);
-            init.put("toolFailures", 0);
-            init.put("scratchpad", new LinkedHashMap<>());
-            init.put("messages", new ArrayList<>());
-            init.put("compressedSummary", "");
-            init.put("nextNode", "context");
-            init.put("streamingPrompt", "");
-            init.put("observerReport", "");
-            init.put("userId", userId);
+            // 与流式入口共用同一初始化工厂，保证初始状态形状一致（含定位/地区/全部默认字段）
+            Map<String, Object> init = GraphInputFactory.newInit(threadId, request.getMessage(), userId,
+                    request.getCenterX(), request.getCenterY(), request.getDistrictId());
 
             RunnableConfig config = RunnableConfig.builder()
                     .threadId(threadId)
@@ -107,7 +71,7 @@ public class ChatRagController {
             boolean answerFromStreaming = false;
             if (result.isPresent()) {
                 ReActAgentState state = result.get();
-                if ("__STREAMING__".equals(state.finalAnswer())) {
+                if (StateKeys.SENTINEL_STREAMING.equals(state.finalAnswer())) {
                     answer = generateSyncAnswer(state);
                     answerFromStreaming = true;
                 } else {
@@ -123,7 +87,7 @@ public class ChatRagController {
             if (request.getMessage() != null && !request.getMessage().isEmpty()
                     && answer != null && !answer.isEmpty()) {
                 try {
-                    chatHistoryRepo.saveRound(userId, request.getMessage(), answer);
+                    chatHistoryRepo.saveRound(userId, request.getMessage(), answer, null, null);
                 } catch (Exception e) {
                     log.error("Failed to persist chat round for user {}: {}", userId, e.getMessage());
                 }
@@ -146,7 +110,8 @@ public class ChatRagController {
             return Result.ok(answer);
         } catch (Exception e) {
             log.error("ReAct error for user {}", userId, e);
-            return Result.fail("AI客服处理失败: " + e.getMessage());
+            // 异常详情只在服务端日志，不向用户暴露技术细节
+            return Result.fail("服务繁忙，请稍后重试。");
         }
     }
 
@@ -186,14 +151,8 @@ public class ChatRagController {
 
     /** 非流式端点用同步模型生成最终回答（AnswerNode 设置了 __STREAMING__ 标记时） */
     private String generateSyncAnswer(ReActAgentState state) {
-        String prompt = state.streamingPrompt();
-        if (prompt == null || prompt.isEmpty()) {
-            return "系统处理完成，但未生成回答。";
-        }
         try {
-            ChatResponse resp = chatModel.chat(List.of(
-                    SystemMessage.from("你是生活优选AI客服小优。友好、专业、简洁。"),
-                    UserMessage.from(prompt)));
+            ChatResponse resp = chatModel.chat(answerInjection.build(state));
             return resp.aiMessage().text();
         } catch (Exception e) {
             log.error("Sync answer generation failed", e);

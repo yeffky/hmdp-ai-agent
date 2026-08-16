@@ -13,7 +13,7 @@ import com.hmdp.rag.retrieval.LLMQueryRewriter;
 import com.hmdp.rag.retrieval.RetrievalService;
 import com.hmdp.rag.splitter.AdaptiveSplitter;
 import com.hmdp.rag.store.QdrantVectorStore;
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.ChatModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -112,12 +112,12 @@ public class RagConfig {
     }
 
     @Bean
-    public LLMQueryRewriter llmQueryRewriter(@Lazy OpenAiChatModel model) {
+    public LLMQueryRewriter llmQueryRewriter(@Lazy ChatModel model) {
         return new LLMQueryRewriter(model);
     }
 
     @Bean
-    public Reranker llmReranker(@Lazy OpenAiChatModel model) {
+    public Reranker llmReranker(@Lazy ChatModel model) {
         return new LLMReranker(model);
     }
 

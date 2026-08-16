@@ -27,6 +27,9 @@ public interface IVoucherOrderService extends IService<VoucherOrder> {
     /** 取消订单（待支付），若为秒杀商品则回补库存 */
     Result cancelOrder(Long orderId);
 
+    /** 退款（已支付且未核销），置为已退款，若为秒杀商品则回补库存 */
+    Result refundOrder(Long orderId);
+
     /** 当前用户的订单列表（含券/店铺信息） */
     Result queryMyOrders();
 

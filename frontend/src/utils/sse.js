@@ -5,13 +5,25 @@ export function extractSSEEvents(chunk, buffer = '') {
   const lines = acc.split('\n')
   const remainder = lines.pop() || ''
   const events = []
+  let lastId = null
   for (const line of lines) {
     const t = line.trim()
+    if (t.startsWith('id:')) {
+      // SSE 事件 id（如 answer_chunk 的累计字符数）→ 关联到紧跟的数据行
+      lastId = t.slice(3).trim() || lastId
+      continue
+    }
+    if (t.startsWith('retry:')) continue
     if (!t.startsWith('data:')) continue
     const jsonStr = t.slice(5).trim()
     if (!jsonStr || jsonStr === '{}') continue
     try {
-      events.push(JSON.parse(jsonStr))
+      const evt = JSON.parse(jsonStr)
+      if (lastId != null) {
+        evt._eventId = lastId
+        lastId = null
+      }
+      events.push(evt)
     } catch {
       /* 忽略无法解析的片段 */
     }
@@ -21,11 +33,11 @@ export function extractSSEEvents(chunk, buffer = '') {
 
 // 解析 /chat/react/stream 的 SSE 事件
 // onEvent(data) 在每条 data: 事件解析后调用；HTTP 401 抛 {code:401}
-export async function streamChat({ message, token, onEvent, signal }) {
+export async function streamChat({ message, token, onEvent, signal, centerX, centerY, districtId }) {
   const res = await fetch('/chat/react/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', authorization: token || '' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, centerX, centerY, districtId }),
     signal
   })
   if (res.status === 401) {

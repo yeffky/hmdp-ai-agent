@@ -11,6 +11,9 @@ import java.util.Map;
 /**
  * DeepSeek API 连通性 & 请求格式测试。
  * 不依赖 Spring 上下文，直接发送 HTTP 请求验证。
+ *
+ * <p>注意：本地代理（DeepSeekProxyController）已随 LangChain4j 原生 role=tool 删除，
+ * 只保留直连场景。
  */
 public class DeepSeekConnectivityTest {
 
@@ -42,36 +45,6 @@ public class DeepSeekConnectivityTest {
         System.out.println("Model: " + MODEL);
         System.out.println("API Key prefix: " + API_KEY.substring(0, Math.min(8, API_KEY.length())) + "...");
         System.out.println("Body: " + body);
-
-        try {
-            ResponseEntity<String> resp = rt.exchange(url, HttpMethod.POST,
-                    new HttpEntity<>(body, headers), String.class);
-            System.out.println("Status: " + resp.getStatusCodeValue());
-            System.out.println("Response: " + resp.getBody());
-        } catch (Exception e) {
-            System.err.println("FAILED: " + e.getClass().getSimpleName() + " - " + e.getMessage());
-            dumpHttpError(e);
-        }
-    }
-
-    /** 测试2：通过本地代理 */
-    @Test
-    public void testViaProxy() {
-        String url = "http://localhost:8081/api/deepseek-proxy/chat/completions";
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("model", MODEL);
-        body.put("messages", List.of(
-                Map.of("role", "user", "content", "hi")
-        ));
-        body.put("max_tokens", 20);
-        body.put("stream", false);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        System.out.println("=== 通过代理 ===");
-        System.out.println("URL: " + url);
 
         try {
             ResponseEntity<String> resp = rt.exchange(url, HttpMethod.POST,

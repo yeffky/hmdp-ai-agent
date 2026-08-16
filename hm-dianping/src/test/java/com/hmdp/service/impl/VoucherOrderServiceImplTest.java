@@ -238,4 +238,91 @@ class VoucherOrderServiceImplTest {
         // id 必须是字符串，避免雪花 ID 在 JS 丢精度
         assertEquals("601234567890123456", list.get(0).get("id"));
     }
+
+    // ---------- 退款（已支付且未核销） ----------
+
+    private VoucherOrder paidOrder() {
+        return new VoucherOrder()
+                .setId(TEST_ORDER_ID)
+                .setUserId(TEST_USER_ID)
+                .setVoucherId(TEST_VOUCHER_ID)
+                .setStatus(2)
+                .setCreateTime(LocalDateTime.now())
+                .setPayTime(LocalDateTime.now());
+    }
+
+    @SuppressWarnings("unchecked")
+    private UpdateChainWrapper<VoucherOrder> stubUpdate(boolean success) {
+        UpdateChainWrapper<VoucherOrder> chain = mock(UpdateChainWrapper.class);
+        when(chain.set(anyString(), any())).thenReturn(chain);
+        when(chain.eq(anyString(), any())).thenReturn(chain);
+        when(chain.update()).thenReturn(success);
+        doReturn(chain).when(voucherOrderService).update();
+        return chain;
+    }
+
+    @Test
+    void refundOrder_orderNotExist_fails() {
+        stubOrder(null);
+        assertFalse(voucherOrderService.refundOrder(TEST_ORDER_ID).getSuccess());
+    }
+
+    @Test
+    void refundOrder_notOwner_fails() {
+        stubOrder(new VoucherOrder().setId(TEST_ORDER_ID).setUserId(1L).setStatus(2));
+        assertFalse(voucherOrderService.refundOrder(TEST_ORDER_ID).getSuccess());
+    }
+
+    @Test
+    void refundOrder_notPaid_fails() {
+        stubOrder(pendingOrder()); // status=1 待支付
+        assertFalse(voucherOrderService.refundOrder(TEST_ORDER_ID).getSuccess());
+        verify(voucherOrderService, never()).update();
+    }
+
+    @Test
+    void refundOrder_paidSeckill_releasesStock() {
+        stubOrder(paidOrder());
+        when(voucherService.getById(TEST_VOUCHER_ID)).thenReturn(voucher(1, 1));
+        stubUpdate(true);
+
+        @SuppressWarnings("unchecked")
+        UpdateChainWrapper<SeckillVoucher> chain = mock(UpdateChainWrapper.class);
+        when(chain.setSql(anyString())).thenReturn(chain);
+        when(chain.eq(anyString(), any())).thenReturn(chain);
+        when(chain.update()).thenReturn(true);
+        when(seckillVoucherService.update()).thenReturn(chain);
+
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> vo = mock(ValueOperations.class);
+        when(stringRedisTemplate.opsForValue()).thenReturn(vo);
+        @SuppressWarnings("unchecked")
+        SetOperations<String, String> so = mock(SetOperations.class);
+        when(stringRedisTemplate.opsForSet()).thenReturn(so);
+
+        var result = voucherOrderService.refundOrder(TEST_ORDER_ID);
+        assertTrue(result.getSuccess());
+        verify(vo).increment("seckill:stock:" + TEST_VOUCHER_ID);
+        verify(so).remove("seckill:order:" + TEST_VOUCHER_ID, TEST_USER_ID.toString());
+    }
+
+    @Test
+    void refundOrder_paidNormal_noStockRelease() {
+        stubOrder(paidOrder());
+        when(voucherService.getById(TEST_VOUCHER_ID)).thenReturn(voucher(0, 1));
+        stubUpdate(true);
+
+        var result = voucherOrderService.refundOrder(TEST_ORDER_ID);
+        assertTrue(result.getSuccess());
+        verify(stringRedisTemplate, never()).opsForValue();
+        verify(stringRedisTemplate, never()).opsForSet();
+    }
+
+    @Test
+    void refundOrder_statusChangedConcurrently_fails() {
+        stubOrder(paidOrder());
+        stubUpdate(false); // CAS 更新 0 行：并发下状态已变化（已核销/已退款）
+        assertFalse(voucherOrderService.refundOrder(TEST_ORDER_ID).getSuccess());
+        verify(stringRedisTemplate, never()).opsForValue();
+    }
 }

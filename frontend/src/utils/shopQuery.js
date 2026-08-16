@@ -4,20 +4,24 @@
 // 距离排序：sortBy=distance 时带圆心坐标 → 后端 geo 距离序
 // 人气/评分：sortBy=comments/score 传给后端 ORDER BY，保证分页与排序一致
 // 搜索：q 存在时按名称 ofName；带 type/district 时限定范围
+// 美食细分：fc 存在且为美食分类时传 foodCategory 过滤
 export function buildShopParams(routeQuery, types = [], page = 1, sortBy = '', loc = {}) {
   const params = { current: page }
   const isRankSort = sortBy === 'comments' || sortBy === 'score'
+  const fc = routeQuery.fc
   if (routeQuery.q !== undefined) {
     const keyword = routeQuery.q || ''
     if (!keyword) return null
     params.name = keyword
     const typeId = Number(routeQuery.type) || 0
     if (typeId) params.typeId = typeId
+    if (fc) params.foodCategory = fc
     if (loc.districtId) params.districtId = loc.districtId
     if (isRankSort) params.sortBy = sortBy
     return params
   }
   params.typeId = Number(routeQuery.type) || types[0]?.id || 0
+  if (fc) params.foodCategory = fc
   if (loc.districtId) params.districtId = loc.districtId
   if (isRankSort) params.sortBy = sortBy
   if (sortBy === 'distance' && loc.x != null && loc.y != null) {

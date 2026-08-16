@@ -110,4 +110,40 @@ class ShopCommentServiceImplTest {
         assertEquals(1L, cap.getValue().getUserId());
         verify(chain).setSql("comments = comments + 1");
     }
+
+    // ---------- 按用户查评价（个人主页评价 tab） ----------
+
+    @Test
+    void listByUser_filtersByUserAndFillsShopName() {
+        Page<ShopComment> page = new Page<>(1, 10);
+        page.setRecords(List.of(
+                new ShopComment().setId(1L).setShopId(9L).setUserId(1L).setContent("好吃")));
+        page.setTotal(1);
+        when(shopCommentMapper.selectPage(any(Page.class), any())).thenReturn(page);
+        Shop shop = new Shop();
+        shop.setName("老王牛肉面");
+        when(shopService.getById(9L)).thenReturn(shop);
+
+        Result r = shopCommentService.listByUser(1L, 1, 10);
+        assertTrue(r.getSuccess());
+        Map<String, Object> data = (Map<String, Object>) r.getData();
+        List<ShopComment> list = (List<ShopComment>) data.get("list");
+        assertEquals(1, list.size());
+        assertEquals("老王牛肉面", list.get(0).getShopName());
+        assertEquals("好吃", list.get(0).getContent());
+        assertFalse((Boolean) data.get("hasMore"));
+    }
+
+    @Test
+    void listByUser_shopMissing_shopNameNull() {
+        Page<ShopComment> page = new Page<>(1, 10);
+        page.setRecords(List.of(new ShopComment().setId(1L).setShopId(99L).setUserId(1L).setContent("x")));
+        when(shopCommentMapper.selectPage(any(Page.class), any())).thenReturn(page);
+        when(shopService.getById(99L)).thenReturn(null);
+
+        Result r = shopCommentService.listByUser(1L, 1, 10);
+        Map<String, Object> data = (Map<String, Object>) r.getData();
+        List<ShopComment> list = (List<ShopComment>) data.get("list");
+        assertNull(list.get(0).getShopName());
+    }
 }

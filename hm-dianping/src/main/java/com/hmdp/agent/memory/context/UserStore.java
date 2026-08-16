@@ -76,6 +76,27 @@ public class UserStore {
         }
     }
 
+    /**
+     * 用户画像固定字段 schema：key → 中文取值说明。
+     * 画像提取 LLM 只能输出这些 key（同名覆盖，避免自由 key 导致画像无限膨胀）；
+     * 只保留稳定偏好，动态事实（订单/排队/近期查询）走对话历史/摘要，不长期入库。
+     */
+    public static final Map<String, String> PROFILE_SCHEMA = new LinkedHashMap<>();
+    static {
+        PROFILE_SCHEMA.put("taste", "口味偏好（如 辣味/清淡/甜口）");
+        PROFILE_SCHEMA.put("categories", "兴趣品类（数组，如 [\"火锅\",\"川菜\",\"KTV\"]）");
+        PROFILE_SCHEMA.put("budget", "预算/性价比倾向（如 性价比高、人均50以内）");
+        PROFILE_SCHEMA.put("scorePref", "评分偏好（如 高评分≥4.5）");
+        PROFILE_SCHEMA.put("services", "关注服务（数组，如 [\"宠物友好\",\"停车\",\"儿童友好\"]）");
+        PROFILE_SCHEMA.put("partySize", "常用用餐人数（数字）");
+        PROFILE_SCHEMA.put("diningTime", "常用用餐时段（如 晚上8点多）");
+        PROFILE_SCHEMA.put("diningScene", "常用用餐场景（如 请朋友聚餐、二人约会）");
+        PROFILE_SCHEMA.put("location", "常用位置/区域（如 福州鼓楼区东街口）");
+        PROFILE_SCHEMA.put("hasPet", "是否可能携带宠物（true/false）");
+        PROFILE_SCHEMA.put("membership", "会员等级（未知则不填）");
+        PROFILE_SCHEMA.put("avoid", "用户想避免的内容（数组，如 [\"排队\",\"太辣\"]）");
+    }
+
     // ======== 公开 API ========
 
     public Profile getProfile(Long userId) {
@@ -139,10 +160,12 @@ public class UserStore {
                 existing.lastUpdated = now;
                 existing.totalSessions++;
 
-                // 序列化为 JSONB 兼容格式
+                // 序列化为 JSONB 兼容格式；只保留固定 schema 字段，逐步清理旧的自由 key 画像
                 Map<String, Object> toStore = new LinkedHashMap<>();
                 for (Map.Entry<String, FieldEntry> e : existing.fields.entrySet()) {
-                    toStore.put(e.getKey(), e.getValue().toRaw());
+                    if (PROFILE_SCHEMA.containsKey(e.getKey())) {
+                        toStore.put(e.getKey(), e.getValue().toRaw());
+                    }
                 }
                 String json = gson.toJson(toStore);
 
@@ -170,9 +193,13 @@ public class UserStore {
         if (profile.fields.isEmpty()) return "";
 
         StringBuilder sb = new StringBuilder();
-        sb.append("## 用户画像\n");
-        for (Map.Entry<String, FieldEntry> e : profile.fields.entrySet()) {
-            sb.append("- ").append(e.getKey()).append(": ").append(e.getValue().v).append("\n");
+        sb.append("## 用户画像（历史偏好，仅供参考；若与用户当前表述冲突，一律以当前表述为准）\n");
+        // 只输出固定 schema 字段（updateProfileAsync 也只存 schema 字段，旧自由 key 已清理）
+        for (String key : PROFILE_SCHEMA.keySet()) {
+            FieldEntry e = profile.fields.get(key);
+            if (e != null && e.v != null && !e.v.toString().isBlank()) {
+                sb.append("- ").append(key).append(": ").append(e.v).append("\n");
+            }
         }
         return sb.toString();
     }

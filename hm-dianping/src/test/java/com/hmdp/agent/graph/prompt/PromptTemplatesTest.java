@@ -14,9 +14,7 @@ class PromptTemplatesTest {
     void allSystemTemplatesLoaded() {
         assertFalse(PromptTemplates.PLANNER_SYSTEM.isBlank(), "planner-system.txt");
         assertFalse(PromptTemplates.EXECUTOR_SYSTEM.isBlank(), "executor-system.txt");
-        assertFalse(PromptTemplates.JUDGE_SYSTEM.isBlank(), "judge-system.txt");
         assertFalse(PromptTemplates.ERROR_ANSWER_SYSTEM.isBlank(), "error-answer-system.txt");
-        assertFalse(PromptTemplates.OBSERVER_VALIDATE_SYSTEM.isBlank(), "observer-validate-system.txt");
         assertFalse(PromptTemplates.ERROR_CLASSIFIER_SYSTEM.isBlank(), "error-classifier-system.txt");
     }
 

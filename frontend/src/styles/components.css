@@ -317,6 +317,25 @@
   font-weight: 700;
 }
 
+/* ---- 美食细分条（ShopList 第二行：自动换行，避免超出屏宽） ---- */
+.fc-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-sm);
+  padding: 0 var(--gap-md) var(--gap-sm);
+  margin-top: -4px;
+}
+.fc-strip .chip {
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+.chip__cnt {
+  font-style: normal;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+.chip.is-active .chip__cnt { color: rgba(255, 255, 255, 0.85); }
+
 /* ---- 空态 / 加载 ---- */
 .empty {
   text-align: center;

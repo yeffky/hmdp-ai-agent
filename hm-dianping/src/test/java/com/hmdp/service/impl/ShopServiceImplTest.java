@@ -81,7 +81,7 @@ class ShopServiceImplTest {
     @Test
     void queryShopByType_sortByScore_ordersByScoreDesc() {
         stubPage();
-        shopService.queryShopByType(1, 1, null, null, 2L, "score");
+        shopService.queryShopByType(1, 1, null, null, 2L, "score", null);
         String sql = capturedSqlSegment();
         assertTrue(sql.contains("ORDER BY score"), "按评分排序应包含 ORDER BY score, actual: " + sql);
         assertTrue(sql.contains("district_id"), "应包含 district_id 过滤, actual: " + sql);
@@ -90,9 +90,26 @@ class ShopServiceImplTest {
     @Test
     void queryShopByType_sortByEmpty_noOrderBy() {
         stubPage();
-        shopService.queryShopByType(1, 1, null, null, null, "");
+        shopService.queryShopByType(1, 1, null, null, null, "", null);
         String sql = capturedSqlSegment();
         assertFalse(sql.contains("ORDER BY"), "综合排序不应带 ORDER BY, actual: " + sql);
+    }
+
+    @Test
+    void queryShopByType_withFoodCategory_filtersBySubCategory() {
+        stubPage();
+        shopService.queryShopByType(1, 1, null, null, null, "", "快餐小吃");
+        String sql = capturedSqlSegment();
+        assertTrue(sql.contains("food_category"), "带 foodCategory 时应包含 food_category 过滤, actual: " + sql);
+        assertTrue(sql.contains("快餐小吃"), "应按细分过滤, actual: " + sql);
+    }
+
+    @Test
+    void queryShopByType_withoutFoodCategory_noFoodCategoryFilter() {
+        stubPage();
+        shopService.queryShopByType(1, 1, null, null, null, "", null);
+        String sql = capturedSqlSegment();
+        assertFalse(sql.contains("food_category"), "无 foodCategory 时不应有 food_category 过滤, actual: " + sql);
     }
 
     @Test

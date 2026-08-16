@@ -17,7 +17,12 @@ const paths = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>',
   ticket: '<path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1.5a2 2 0 0 0 0 4V13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1.5a2 2 0 0 0 0-4V8Z"/><path d="M13 6v12M16 9.5v.01M16 14v.01"/>',
   refresh: '<path d="M20 11A8 8 0 0 0 5.6 6.6L4 8.2M4 4v4.2h4.2M4 13a8 8 0 0 0 14.4 4.4L20 15.8M20 20v-4.2h-4.2"/>',
-  logout: '<path d="M14 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8"/><path d="M10 12h11m0 0-3.5-3.5M21 12l-3.5 3.5"/>'
+  logout: '<path d="M14 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8"/><path d="M10 12h11m0 0-3.5-3.5M21 12l-3.5 3.5"/>',
+  // 服务标识（店铺详情）：停车 / 儿童友好 / 宠物友好 / 容纳人数
+  park: '<rect x="4.5" y="4.5" width="15" height="15" rx="3"/><path d="M9.5 16V8h3a2.5 2.5 0 0 1 0 5h-3"/>',
+  child: '<circle cx="12" cy="9" r="4"/><path d="M12 5V3.5"/><path d="M8.2 6.8 7 5.6M15.8 6.8 17 5.6"/><path d="M4 20c1.6-2.8 4.5-4 8-4s6.4 1.2 8 4"/>',
+  pet: '<circle cx="6.5" cy="8" r="1.4"/><circle cx="11" cy="5.8" r="1.4"/><circle cx="15.5" cy="8" r="1.4"/><path d="M12 10.5c-3.3 0-5 2.8-5 4.3a5 5 0 0 0 10 0c0-1.5-1.7-4.3-5-4.3Z"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 19c1.2-2.8 3.6-4 6.5-4s5.3 1.2 6.5 4"/><circle cx="17" cy="10" r="2.5"/><path d="M17.5 15.2c1.7.3 3 1.2 4 2.8"/>'
 }
 const props = defineProps({
   name: { type: String, required: true },

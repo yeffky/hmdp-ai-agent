@@ -24,6 +24,8 @@ export const shopApi = {
   ofType: (params) => unwrap(http.get('/shop/of/type', { params })),
   ofName: (params) => unwrap(http.get('/shop/of/name', { params })),
   forMap: (params) => unwrap(http.get('/shop/map', { params })),
+  foodCategories: (districtId) =>
+    unwrap(http.get('/shop/food-categories', { params: { districtId } })),
   allByTypes: async (typeIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) => {
     const lists = await Promise.all(
       typeIds.map((typeId) =>
@@ -71,19 +73,32 @@ export const blogApi = {
 export const followApi = {
   toggle: (id, isFollow) => http.put(`/follow/${id}/${isFollow}`),
   isFollowing: (id) => unwrap(http.get(`/follow/or/not/${id}`)),
-  common: (id) => unwrap(http.get(`/follow/common/${id}`))
+  common: (id) => unwrap(http.get(`/follow/common/${id}`)),
+  my: () => unwrap(http.get('/follow/my')),
+  fans: () => unwrap(http.get('/follow/fans'))
 }
 
 export const shopCommentApi = {
   list: (shopId, current = 1, size = 5) =>
     unwrap(http.get(`/shop-comment/list/${shopId}`, { params: { current, size } })),
-  add: (body) => unwrap(http.post('/shop-comment', body))
+  add: (body) => unwrap(http.post('/shop-comment', body)),
+  ofUser: (userId, current = 1, size = 10) =>
+    unwrap(http.get(`/shop-comment/of/user/${userId}`, { params: { current, size } }))
 }
 
 export const blogCommentApi = {
   list: (blogId, current = 1, size = 5) =>
     unwrap(http.get(`/blog-comments/list/${blogId}`, { params: { current, size } })),
   add: (body) => unwrap(http.post('/blog-comments', body))
+}
+
+export const agentTraceApi = {
+  list: (current = 1, size = 20) => unwrap(http.get('/admin/trace/list', { params: { current, size } })),
+  detail: (traceId) => unwrap(http.get(`/admin/trace/${traceId}`)),
+  llmTrace: (traceId) => unwrap(http.get(`/admin/trace/llm/${traceId}`)),
+  summary: () => unwrap(http.get('/admin/trace/summary')),
+  trends: (range = '24h') => unwrap(http.get('/admin/trace/trends', { params: { range } })),
+  stages: () => unwrap(http.get('/admin/trace/stages'))
 }
 
 export const voucherApi = {
@@ -96,6 +111,7 @@ export const voucherOrderApi = {
   buy: (voucherId) => unwrap(http.post(`/voucher-order/buy/${voucherId}`)),
   pay: (orderId, payType = 1) => unwrap(http.put(`/voucher-order/pay/${orderId}`, null, { params: { payType } })),
   cancel: (orderId) => unwrap(http.put(`/voucher-order/cancel/${orderId}`)),
+  refund: (orderId) => unwrap(http.put(`/voucher-order/refund/${orderId}`)),
   my: () => unwrap(http.get('/voucher-order/my'))
 }
 
@@ -117,7 +133,6 @@ export const queueApi = {
 }
 
 export const chatApi = {
-  rag: (sessionId, message) => unwrap(http.post('/chat/rag', { sessionId, message }, { timeout: 60000 })),
   react: (sessionId, message) => unwrap(http.post('/chat/react', { sessionId, message }, { timeout: 60000 })),
   history: (params) => unwrap(http.get('/chat/history', { params }))
 }

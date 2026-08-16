@@ -38,11 +38,17 @@ public class PostgresConfig {
         config.setJdbcUrl(url);
         config.setUsername(username);
         config.setPassword(password);
-        config.setMaximumPoolSize(5);
-        config.setMinimumIdle(1);
-        config.setConnectionTimeout(5000);
+        // 连接池调优：checkpoint saver + UserStore + ChatHistory 共用，池太小并发易耗尽
+        config.setMaximumPoolSize(10);
+        config.setMinimumIdle(2);
+        config.setConnectionTimeout(8000);
         config.setIdleTimeout(300000);
         config.setMaxLifetime(600000);
+        // keepalive：定期对空闲连接发保活查询，防止远程 PG/中间网络设备静默回收空闲连接
+        //（曾出现 "This connection has been closed" → 死连接占满池 → checkpoint 读取超时无响应）
+        config.setKeepaliveTime(120000);
+        config.setValidationTimeout(5000);
+        config.setConnectionTestQuery("SELECT 1");
         config.setPoolName("PostgresPool");
 
         HikariDataSource ds = new HikariDataSource(config);
@@ -87,8 +93,17 @@ public class PostgresConfig {
                 "  user_id BIGINT NOT NULL," +
                 "  user_message TEXT NOT NULL," +
                 "  assistant_message TEXT," +
+                "  cards JSONB," +
+                "  blocks JSONB," +
                 "  create_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP" +
                 ")"
+            );
+            // 已有库升级：补齐卡片列与回答结构列（幂等）
+            jdbc.execute(
+                "ALTER TABLE tb_chat_history ADD COLUMN IF NOT EXISTS cards JSONB"
+            );
+            jdbc.execute(
+                "ALTER TABLE tb_chat_history ADD COLUMN IF NOT EXISTS blocks JSONB"
             );
             jdbc.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_history_user_id " +

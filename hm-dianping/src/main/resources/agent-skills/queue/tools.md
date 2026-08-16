@@ -1,0 +1,4 @@
+takeQueueNumber
+queryMyQueueStatus
+queryShopQueueStatus
+cancelMyQueue

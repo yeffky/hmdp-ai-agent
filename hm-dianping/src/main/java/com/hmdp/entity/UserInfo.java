@@ -29,8 +29,11 @@ public class UserInfo implements Serializable {
 
     /**
      * 主键，用户id
+     * 业务主键：由登录用户 id 显式输入，表内非自增、无默认值。
+     * 用 IdType.INPUT 而非 AUTO——AUTO 会让 MyBatis-Plus 在 insert 时忽略该值，
+     * 交由数据库自增，导致 "Field 'user_id' doesn't have a default value"。
      */
-    @TableId(value = "user_id", type = IdType.AUTO)
+    @TableId(value = "user_id", type = IdType.INPUT)
     private Long userId;
 
     /**

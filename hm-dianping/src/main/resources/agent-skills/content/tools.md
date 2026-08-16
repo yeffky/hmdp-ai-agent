@@ -1,0 +1,3 @@
+queryShopBlogs
+queryUserBlogs
+queryShopComments

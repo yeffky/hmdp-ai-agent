@@ -1,7 +1,7 @@
 package com.hmdp.rag.rerank;
 
 import com.hmdp.rag.model.SearchResult;
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -21,12 +21,12 @@ public class LLMReranker implements Reranker {
 
     private static final Logger log = LoggerFactory.getLogger(LLMReranker.class);
 
-    private final OpenAiChatModel model;
+    private final ChatModel model;
 
     public static final int MAX_CANDIDATES = 15;
     public static final int MAX_TEXT_LEN = 400;
 
-    public LLMReranker(OpenAiChatModel model) {
+    public LLMReranker(ChatModel model) {
         this.model = model;
     }
 

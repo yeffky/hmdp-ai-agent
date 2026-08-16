@@ -5,6 +5,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
@@ -234,13 +235,28 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     }
 
     @Override
-    public Result queryShopByType(Integer typeId, Integer current, Double x, Double y, Long districtId, String sortBy) {
+    public Result foodCategories(Long districtId) {
+        QueryWrapper<Shop> qw = new QueryWrapper<Shop>()
+                .select("food_category as name, COUNT(*) as cnt")
+                .eq("type_id", 1)
+                .isNotNull("food_category")
+                .groupBy("food_category")
+                .orderByDesc("cnt");
+        if (districtId != null) {
+            qw.eq("district_id", districtId);
+        }
+        return Result.ok(baseMapper.selectMaps(qw));
+    }
+
+    @Override
+    public Result queryShopByType(Integer typeId, Integer current, Double x, Double y, Long districtId, String sortBy, String foodCategory) {
         // 1.判断是否根据坐标查询
         if (x == null || y == null) {
-            // 根据类型分页查询（可按地区过滤、按人气/评分排序）
+            // 根据类型分页查询（可按地区过滤、按人气/评分排序、美食细分过滤）
             Page<Shop> page = query()
                     .eq(districtId != null, "district_id", districtId)
                     .eq("type_id", typeId)
+                    .eq(StrUtil.isNotBlank(foodCategory), "food_category", foodCategory)
                     .orderByDesc("comments".equals(sortBy), "comments")
                     .orderByDesc("score".equals(sortBy), "score")
                     .page(new Page<>(current, SystemConstants.DEFAULT_PAGE_SIZE));
@@ -285,7 +301,11 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.ok(Collections.emptyList());
         }
         String idStr = StrUtil.join(",", ids);
-        List<Shop> shops = query().in("id", ids).last("order by field(id," + idStr + ")").list();
+        List<Shop> shops = query()
+                .in("id", ids)
+                .eq(StrUtil.isNotBlank(foodCategory), "food_category", foodCategory)
+                .last("order by field(id," + idStr + ")")
+                .list();
         for (Shop shop: shops) {
             shop.setDistance(distanceMap.get(shop.getId().toString()).getValue());
         }

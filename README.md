@@ -97,8 +97,9 @@ Consumer 异步消费 → Redisson 分布式锁 → 写库落单
 
 - 秒杀入口：Lua 脚本在 Redis 侧原子完成库存校验/扣减与一人一单判定，扛住高并发
 - 异步落单：通过 RabbitMQ 解耦，Consumer 手动 ACK + prefetch=1 公平分发，`concurrency=3`
-- 可靠投递：消费失败自动重试（指数退避 2s/5s/10s），超过 3 次转入死信队列 `seckill.order.dlq`，避免无限重试
-- 幂等兜底：`tb_voucher_order` 唯一索引 `(user_id, voucher_id)` 作为 DB 层最后防线，防重复下单
+- 发布可靠：`publisher-confirm-type: correlated` 发布确认，Broker nack / 消息不可路由时由 `ConfirmCallback`/`ReturnsCallback` **回补 Redis 库存与一人一单集合**（Lua 已预扣，防止库存被"吞"）
+- 消费可靠：消费失败自动重试（指数退避 2s/5s/10s），超过 3 次转入死信队列 `seckill.order.dlq`，避免无限重试
+- 幂等兜底：`tb_voucher_order` 唯一索引 `(user_id, voucher_id)` 作为 DB 层最后防线，防重复下单（建表脚本 `db/hmdp.sql` + 幂等迁移 `db/voucher_order_unique_index.sql`）
 
 ## O2O 核心业务（仓库扩展）
 
@@ -174,7 +175,7 @@ hm-dianping/src/main/java/com/hmdp/
 │   └── document/DocumentPipeline.java
 └── controller/
     ├── ReactStreamController.java          # /chat/react/stream (SSE)
-    ├── ChatRagController.java              # /chat/rag /chat/history
+    ├── ChatRagController.java              # /chat/react /chat/history
     ├── KnowledgeBaseController.java        # /kb/*
     ├── QueueTicketController.java          # /queue-ticket/*
     └── QdrantAdminController.java          # /api/qdrant/admin/*
@@ -254,19 +255,14 @@ frontend/
 mysql -u root -p < src/main/resources/db/hmdp.sql
 ```
 
-`hmdp.sql` 已含全部新表/字段（城市地区、团购封面、排队开关、店铺评论等）。对**已有库**增量升级，按需执行 `db/` 下的幂等迁移：
+`hmdp.sql` 已含全部新表/字段（城市地区、团购封面、排队开关、店铺评论、秒杀唯一索引等）。对**已有库**增量升级，按需执行 `db/` 下的幂等迁移：
 
 ```
-db/city_district.sql        # tb_city / tb_district / tb_shop.district_id
-db/shop_queue_enabled.sql   # tb_shop.queue_enabled
-db/voucher_image.sql        # tb_voucher.image
-db/shop_comment.sql         # tb_shop_comment
-```
-
-秒杀幂等兜底需要唯一索引（防止同一用户重复购买同一券）：
-
-```sql
-ALTER TABLE tb_voucher_order ADD UNIQUE INDEX uk_user_voucher (user_id, voucher_id);
+db/city_district.sql                 # tb_city / tb_district / tb_shop.district_id
+db/shop_queue_enabled.sql            # tb_shop.queue_enabled
+db/voucher_image.sql                 # tb_voucher.image
+db/shop_comment.sql                  # tb_shop_comment
+db/voucher_order_unique_index.sql    # tb_voucher_order 唯一索引 uk_user_voucher（秒杀幂等兜底，幂等）
 ```
 
 **PostgreSQL** — 创建数据库，表由 `DeltaPostgresSaver` 和 `PostgresConfig` 自动创建：

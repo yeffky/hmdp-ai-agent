@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { userApi } from '../api'
 import router from '../router'
+import { useChatStore } from './chat'
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -43,6 +44,8 @@ export const useUserStore = defineStore('user', {
       this.setToken('')
       this.setProfile(null)
       this.info = null
+      // 清空聊天内存，避免下一个登录用户看到上一个账号的对话
+      useChatStore().$reset()
       router.push('/')
     },
     async loadMe(force = false) {

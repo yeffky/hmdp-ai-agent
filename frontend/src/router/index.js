@@ -9,11 +9,14 @@ const routes = [
   { path: '/blog/:id', name: 'blog-detail', component: () => import('../views/BlogDetail.vue') },
   { path: '/blog/edit', name: 'blog-edit', component: () => import('../views/BlogEdit.vue') },
   { path: '/me', name: 'me', component: () => import('../views/User/Info.vue'), meta: { tabbar: 4 } },
-  { path: '/me/orders', name: 'my-orders', component: () => import('../views/MyOrders.vue') },
+  { path: '/me/orders', name: 'my-orders', component: () => import('../views/MyOrders.vue'), meta: { tabbar: 3 } },
   { path: '/me/edit', name: 'edit-info', component: () => import('../views/User/EditInfo.vue') },
+  { path: '/me/fans', name: 'my-fans', component: () => import('../views/User/FollowList.vue'), meta: { type: 'fans' } },
+  { path: '/me/follows', name: 'my-follows', component: () => import('../views/User/FollowList.vue'), meta: { type: 'follows' } },
   { path: '/user/:id', name: 'other-info', component: () => import('../views/User/OtherInfo.vue') },
   { path: '/admin/kb', name: 'kb-admin', component: () => import('../views/admin/KbAdmin.vue') },
   { path: '/admin/queue', name: 'queue-admin', component: () => import('../views/admin/QueueAdmin.vue') },
+  { path: '/admin/trace', name: 'agent-trace', component: () => import('../views/admin/AgentTrace.vue') },
   { path: '/rag-demo', name: 'rag-demo', component: () => import('../views/admin/RagDemo.vue') },
 ]
 

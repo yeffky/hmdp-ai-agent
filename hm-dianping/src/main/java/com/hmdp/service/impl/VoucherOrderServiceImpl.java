@@ -13,6 +13,7 @@ import com.hmdp.service.IVoucherOrderService;
 import com.hmdp.service.IVoucherService;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SeckillCorrelationData;
 import com.hmdp.utils.UserHolder;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
@@ -85,7 +86,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail(r == 1 ? "库存不足" : "不能重复下单");
         }
 
-        // 2.发送消息到RabbitMQ
+        // 2.发送消息到RabbitMQ（携带 CorrelationData：发布确认失败时可凭其回补 Redis 预留）
         VoucherOrder voucherOrder = new VoucherOrder();
         voucherOrder.setId(orderId);
         voucherOrder.setUserId(userId);
@@ -94,7 +95,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         rabbitTemplate.convertAndSend(
                 RabbitMQConfig.SECKILL_ORDER_EXCHANGE,
                 RabbitMQConfig.SECKILL_ORDER_ROUTING_KEY,
-                voucherOrder);
+                voucherOrder,
+                new SeckillCorrelationData(voucherOrder));
 
         return Result.ok();
     }
@@ -177,6 +179,31 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     }
 
     @Override
+    public Result refundOrder(Long orderId) {
+        Long userId = UserHolder.getUser().getId();
+        VoucherOrder order = getById(orderId);
+        if (order == null) return Result.fail("订单不存在");
+        if (!order.getUserId().equals(userId)) return Result.fail("无权操作该订单");
+        if (order.getStatus() == null || order.getStatus() != 2) return Result.fail("仅已支付未核销的订单可退款");
+
+        // CAS 更新：仅当仍为已支付(2)时置为已退款(6)，防止并发下重复退款 / 与核销竞争。
+        // 注意：用字符串列名而非 Lambda 方法引用（VoucherOrder::getStatus）——MyBatis-Plus 3.4.3
+        // 解析 Lambda 需反射访问 java.lang.invoke.SerializedLambda，在 JDK17 强封装下会抛
+        // InaccessibleObjectException，故此处与项目其他代码保持一致用字符串 SQL。
+        boolean ok = update()
+                .set("status", 6)
+                .set("refund_time", LocalDateTime.now())
+                .eq("id", orderId)
+                .eq("status", 2)
+                .update();
+        if (!ok) return Result.fail("订单状态已变化，无法退款");
+
+        // 秒杀券回补库存 + 放开一人一单
+        releaseSeckillStock(order);
+        return Result.ok();
+    }
+
+    @Override
     public Result queryMyOrders() {
         Long userId = UserHolder.getUser().getId();
         List<VoucherOrder> orders = query()
@@ -250,6 +277,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                 .eq("voucher_id", order.getVoucherId())
                 .update();
         stringRedisTemplate.opsForValue().increment(RedisConstants.SECKILL_STOCK_KEY + order.getVoucherId());
-        stringRedisTemplate.opsForSet().remove("seckill:order:" + order.getVoucherId(), order.getUserId().toString());
+        stringRedisTemplate.opsForSet().remove(RedisConstants.SECKILL_ORDER_SET_KEY + order.getVoucherId(), order.getUserId().toString());
     }
 }

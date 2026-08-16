@@ -18,9 +18,7 @@ public final class PromptTemplates {
     public static final String EXECUTOR_SYSTEM = load("executor-system.txt");
     public static final String ERROR_CLASSIFIER_SYSTEM = load("error-classifier-system.txt");
     public static final String ERROR_CLASSIFIER_PROMPT = load("error-classifier-prompt.txt");
-    public static final String JUDGE_SYSTEM = load("judge-system.txt");
     public static final String ERROR_ANSWER_SYSTEM = load("error-answer-system.txt");
-    public static final String OBSERVER_VALIDATE_SYSTEM = load("observer-validate-system.txt");
 
     private PromptTemplates() {}
 

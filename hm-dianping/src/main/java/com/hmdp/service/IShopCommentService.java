@@ -11,4 +11,7 @@ public interface IShopCommentService extends IService<ShopComment> {
 
     /** 发表店铺评论，并累加 tb_shop.comments 计数 */
     Result addComment(Long shopId, String content, Integer rating);
+
+    /** 按用户分页查询该用户发表的店铺评论（补全店铺名），返回 {list,total,hasMore} */
+    Result listByUser(Long userId, Integer current, Integer size);
 }

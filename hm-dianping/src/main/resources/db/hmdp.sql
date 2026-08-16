@@ -110,8 +110,8 @@ CREATE TABLE `tb_shop`  (
   `images` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '商铺图片，多个图片以\',\'隔开',
   `area` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '商圈，例如陆家嘴',
   `address` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '地址',
-  `x` double UNSIGNED NOT NULL COMMENT '经度',
-  `y` double UNSIGNED NOT NULL COMMENT '维度',
+  `x` double UNSIGNED NOT NULL COMMENT '经度坐标（GCJ-02，定位/算距离用）',
+  `y` double UNSIGNED NOT NULL COMMENT '纬度坐标（GCJ-02，定位/算距离用）',
   `avg_price` bigint(10) UNSIGNED NULL DEFAULT NULL COMMENT '均价，取整数',
   `sold` int(10) UNSIGNED ZEROFILL NOT NULL COMMENT '销量',
   `comments` int(10) UNSIGNED ZEROFILL NOT NULL COMMENT '评论数量',
@@ -1274,7 +1274,8 @@ CREATE TABLE `tb_voucher_order`  (
   `use_time` timestamp NULL DEFAULT NULL COMMENT '核销时间',
   `refund_time` timestamp NULL DEFAULT NULL COMMENT '退款时间',
   `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  PRIMARY KEY (`id`) USING BTREE
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `uk_user_voucher` (`user_id`, `voucher_id`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
 
 -- ----------------------------

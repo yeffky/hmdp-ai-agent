@@ -20,7 +20,12 @@ export const useLocationStore = defineStore('location', {
     loaded: false
   }),
   getters: {
-    label: (s) => (s.current ? `${s.current.cityName} · ${s.current.districtName}` : '')
+    label: (s) => (s.current ? `${s.current.cityName} · ${s.current.districtName}` : ''),
+    // 当前地区 id（1拱墅/2鼓楼），未选时兜底默认福州鼓楼
+    districtId: (s) => s.current?.districtId ?? DEFAULT_LOCATION.districtId,
+    // 当前地区中心坐标（getter：从 current 读，未恢复时兜底默认福州鼓楼）
+    centerX: (s) => s.current?.centerX ?? DEFAULT_LOCATION.centerX,
+    centerY: (s) => s.current?.centerY ?? DEFAULT_LOCATION.centerY
   },
   actions: {
     async ensure() {

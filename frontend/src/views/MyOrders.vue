@@ -1,16 +1,20 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { voucherOrderApi } from '../api'
 import { fenToYuan } from '../utils/format'
 import AppHeader from '../components/AppHeader.vue'
+import AppTabbar from '../components/AppTabbar.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PayDialog from '../components/PayDialog.vue'
+import OrderDetailDialog from '../components/OrderDetailDialog.vue'
 
 const orders = ref([])
 const tab = ref('all')
 const payVisible = ref(false)
 const payOrderId = ref(0)
+const detailVisible = ref(false)
+const detailOrder = ref(null)
 const loaded = ref(false)
 
 const STATUS_TEXT = { 1: '待支付', 2: '已支付', 3: '已核销', 4: '已取消', 5: '退款中', 6: '已退款' }
@@ -18,12 +22,15 @@ const TABS = [
   { key: 'all', label: '全部' },
   { key: 1, label: '待支付' },
   { key: 2, label: '已支付' },
-  { key: 4, label: '已取消' }
+  { key: 'cancelled', label: '已取消' }
 ]
 
-const filtered = computed(() =>
-  tab.value === 'all' ? orders.value : orders.value.filter((o) => o.status === tab.value)
-)
+// 「已取消」tab 同时归入 已取消(4) + 已退款(6)
+const filtered = computed(() => {
+  if (tab.value === 'all') return orders.value
+  if (tab.value === 'cancelled') return orders.value.filter((o) => o.status === 4 || o.status === 6)
+  return orders.value.filter((o) => o.status === tab.value)
+})
 
 onMounted(loadOrders)
 
@@ -41,7 +48,21 @@ function pay(o) {
   payVisible.value = true
 }
 
+function openDetail(o) {
+  detailOrder.value = o
+  detailVisible.value = true
+}
+
 async function cancel(o) {
+  try {
+    await ElMessageBox.confirm('确定取消该订单吗？取消后不可恢复。', '取消订单', {
+      type: 'warning',
+      confirmButtonText: '确认取消',
+      cancelButtonText: '再想想'
+    })
+  } catch {
+    return // 用户选择不取消
+  }
   try {
     await voucherOrderApi.cancel(o.id)
     ElMessage.success('已取消')
@@ -57,7 +78,7 @@ function onPaid() {
 </script>
 
 <template>
-  <div class="orders page no-tabbar">
+  <div class="orders page">
     <AppHeader title="我的订单" />
 
     <nav class="orders__tabs">
@@ -71,7 +92,7 @@ function onPaid() {
     </nav>
 
     <div v-if="filtered.length" class="orders__list">
-      <div v-for="o in filtered" :key="o.id" class="order-card">
+      <div v-for="o in filtered" :key="o.id" class="order-card" @click="openDetail(o)">
         <img class="order-card__img" :src="o.image" alt="" loading="lazy" />
         <div class="order-card__body">
           <h3 class="order-card__title ellipsis">{{ o.title }}</h3>
@@ -83,7 +104,7 @@ function onPaid() {
         </div>
         <div class="order-card__side">
           <span class="order-card__status" :class="'is-' + o.status">{{ STATUS_TEXT[o.status] || '未知' }}</span>
-          <div v-if="o.status === 1" class="order-card__actions">
+          <div v-if="o.status === 1" class="order-card__actions" @click.stop>
             <button class="order-card__btn order-card__btn--ghost" @click="cancel(o)">取消</button>
             <button class="order-card__btn" @click="pay(o)">去支付</button>
           </div>
@@ -94,6 +115,15 @@ function onPaid() {
     <EmptyState v-else-if="loaded" icon="ticket" text="还没有相关订单" />
 
     <PayDialog v-model="payVisible" :order-id="payOrderId" @paid="onPaid" />
+    <OrderDetailDialog
+      v-model="detailVisible"
+      :order="detailOrder"
+      @canceled="loadOrders"
+      @paid="loadOrders"
+      @refunded="loadOrders"
+    />
+
+    <AppTabbar />
   </div>
 </template>
 
@@ -126,6 +156,7 @@ function onPaid() {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
+  cursor: pointer;
 }
 .order-card__img {
   width: 80px;

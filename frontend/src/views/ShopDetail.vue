@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import AppHeader from '../components/AppHeader.vue'
@@ -38,9 +38,11 @@ const taking = ref(null)
 const now = ref(Date.now())
 let ticker = null
 
-const shopId = computed(() => Number(route.params.id))
+// 路由参数 id 可能是对外混淆 ID（AI 卡片点击）或数据库真实 ID（列表页），一律透传字符串，
+// 后端 shopId 接口统一 decodeOrId 兼容（不能 Number()——混淆串会变 NaN）
+const shopId = computed(() => String(route.params.id ?? ''))
 
-onMounted(async () => {
+async function loadShop() {
   try {
     const s = await shopApi.detail(shopId.value)
     s.images = (s.images || '').split(',')
@@ -54,9 +56,21 @@ onMounted(async () => {
   await loadVouchers()
   loadRelatedBlogs()
   loadComments()
+}
+
+onMounted(() => {
+  loadShop()
   ticker = setInterval(() => (now.value = Date.now()), 1000)
 })
 onBeforeUnmount(() => clearInterval(ticker))
+
+// 路由参数变化（如 AI 聊天卡片点击切换店铺）→ 组件被复用不会重挂载，需监听重新加载
+watch(shopId, (nid, oldId) => {
+  if (nid !== oldId) {
+    shop.value = null
+    loadShop()
+  }
+})
 
 async function loadMyQueue() {
   try {
@@ -253,10 +267,17 @@ async function submitComment() {
           <span class="sd__dim">{{ shop.openHours }}</span>
         </div>
         <div class="sd__tags">
+          <span v-if="shop.foodCategory" class="sd__tag sd__tag--fc">{{ shop.foodCategory }}</span>
           <span class="sd__tag">口味 {{ shop.rating.toFixed(1) }}</span>
           <span class="sd__tag">环境 {{ shop.rating.toFixed(1) }}</span>
           <span class="sd__tag">服务 {{ shop.rating.toFixed(1) }}</span>
           <span class="sd__rank stamp">好评榜</span>
+        </div>
+        <div v-if="shop.hasParking || shop.childFriendly || shop.petFriendly || shop.maxSeats" class="sd__service">
+          <span v-if="shop.hasParking" class="sd__service-item" title="支持停车"><AppIcon name="park" :size="15" /></span>
+          <span v-if="shop.childFriendly" class="sd__service-item" title="儿童友好"><AppIcon name="child" :size="15" /></span>
+          <span v-if="shop.petFriendly" class="sd__service-item" title="宠物友好"><AppIcon name="pet" :size="15" /></span>
+          <span v-if="shop.maxSeats" class="sd__service-item" title="最多容纳人数"><AppIcon name="users" :size="15" /><i class="sd__service-num">{{ shop.maxSeats }}</i></span>
         </div>
 
         <div class="sd__gallery">
@@ -274,6 +295,8 @@ async function submitComment() {
           <span class="ellipsis">{{ shop.address }}</span>
           <span class="sd__price">¥{{ shop.avgPrice }}/人</span>
         </div>
+
+        <p v-if="shop.description" class="sd__desc">{{ shop.description }}</p>
       </section>
 
       <!-- 排队取号：签名区块（部分商家不开放） -->
@@ -486,6 +509,47 @@ async function submitComment() {
   font-size: var(--text-sm);
 }
 .sd__address .sd__price { margin-left: auto; color: var(--amber); font-weight: 700; font-family: var(--font-display); }
+
+.sd__tag--fc {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--vermilion-soft);
+  color: var(--vermilion);
+  font-weight: 600;
+}
+.sd__service {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.sd__service-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  color: var(--ink-2);
+  background: var(--card);
+  line-height: 1;
+}
+.sd__service-num {
+  font-style: normal;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--vermilion);
+}
+.sd__desc {
+  margin-top: 10px;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--ink-2);
+  background: var(--card);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
 
 .sd__section {
   margin-top: var(--gap-lg);

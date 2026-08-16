@@ -58,16 +58,22 @@ function pick(arr, seed) { return arr[hash(seed) % arr.length] }
 function esc(s) { return String(s || '').replace(/\\/g, '').replace(/'/g, "''") }
 
 function main() {
-  const shopTsv = readFileSync(resolve(__dirname, '../seed-groupbuy/shops.tsv'), 'utf8')
+  const argv = process.argv
+  const shopsInput = argv[argv.indexOf('--shops') + 1] || '../seed-groupbuy/shops.tsv'
+  const shopsOnly = argv.includes('--shops-only')   // 只生成店铺评论（追加新店批次用，避免重复笔记评论）
+  const shopTsv = readFileSync(resolve(__dirname, shopsInput), 'utf8')
   const shops = shopTsv.split('\n').filter(Boolean).map((l) => {
     const [id, type, name] = l.split('\t')
     return { id: Number(id), type: Number(type), name }
   })
-  const blogTsv = readFileSync(new URL('../sd-gen/blogs_v2.tsv', import.meta.url), 'utf8')
-  const blogs = blogTsv.split('\n').filter(Boolean).map((l) => {
-    const [id, type, name] = l.split('\t')
-    return { id: Number(id), type: Number(type), name }
-  })
+  const blogs = []
+  if (!shopsOnly) {
+    const blogTsv = readFileSync(new URL('../sd-gen/blogs_v2.tsv', import.meta.url), 'utf8')
+    blogs.push(...blogTsv.split('\n').filter(Boolean).map((l) => {
+      const [id, type, name] = l.split('\t')
+      return { id: Number(id), type: Number(type), name }
+    }))
+  }
 
   const shopRows = []
   const blogRows = []
@@ -103,13 +109,17 @@ function main() {
   const header = `-- 由 tools/seed-comment/gen.mjs 生成（店铺评论 + 笔记评论，计数与行数对齐）
 -- 生成时间 ${new Date().toISOString()}
 `
-  const sql = `${header}
+  let sql = `${header}
 INSERT INTO \`tb_shop_comment\` (\`shop_id\`, \`user_id\`, \`content\`, \`rating\`, \`liked\`, \`status\`, \`create_time\`, \`update_time\`) VALUES
 ${shopRows.join(',\n')};
-
+`
+  if (blogRows.length) {
+    sql += `
 INSERT INTO \`tb_blog_comments\` (\`blog_id\`, \`user_id\`, \`parent_id\`, \`answer_id\`, \`content\`, \`liked\`, \`status\`, \`create_time\`, \`update_time\`) VALUES
 ${blogRows.join(',\n')};
-
+`
+  }
+  sql += `
 -- 计数对齐
 UPDATE \`tb_shop\` s SET s.\`comments\` = (SELECT COUNT(*) FROM \`tb_shop_comment\` c WHERE c.\`shop_id\` = s.\`id\`);
 UPDATE \`tb_blog\` b SET b.\`comments\` = (SELECT COUNT(*) FROM \`tb_blog_comments\` c WHERE c.\`blog_id\` = b.\`id\`);

@@ -1,0 +1,6 @@
+geoSearch
+searchShop
+searchShops
+recommendShops
+listShopVouchers
+showCards

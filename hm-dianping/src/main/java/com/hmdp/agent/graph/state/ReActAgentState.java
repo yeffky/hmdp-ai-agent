@@ -25,12 +25,19 @@ public class ReActAgentState extends AgentState {
         return this.<String>value("userQuery").orElse(null);
     }
 
-    public String planJson() {
-        return this.<String>value("planJson").orElse(null);
+    /** Planner 语义选中的技能名列表（JSON 数组字符串存储，转 List；空返回空列表） */
+    public java.util.List<String> selectedSkills() {
+        String raw = this.<String>value("selectedSkills").orElse("");
+        if (raw == null || raw.isBlank()) return new java.util.ArrayList<>();
+        try {
+            return cn.hutool.json.JSONUtil.parseArray(raw).toList(String.class);
+        } catch (Exception e) {
+            return new java.util.ArrayList<>();
+        }
     }
 
-    public String remainPlan() {
-        return this.<String>value("remainPlan").orElse("");
+    public String plan() {
+        return this.<String>value("plan").orElse("");
     }
 
     public String finalAnswer() {
@@ -38,23 +45,24 @@ public class ReActAgentState extends AgentState {
     }
 
     public String nextNode() {
-        return this.<String>value("nextNode").orElse(null);
+        return this.<String>value(StateKeys.NEXT_NODE).orElse(null);
     }
 
     public String compressedSummary() {
         return this.<String>value("compressedSummary").orElse("");
     }
 
-    public String observerFeedback() {
-        return this.<String>value("observerFeedback").orElse(null);
-    }
-
-    public String observerReport() {
-        return this.<String>value("observerReport").orElse(null);
+    public String roundEvidence() {
+        return this.<String>value("roundEvidence").orElse(null);
     }
 
     public String contextBlock() {
         return this.<String>value("contextBlock").orElse("");
+    }
+
+    /** 不含对话历史段的上下文块（画像/定位/摘要/经验，供 Agent 决策与 Answer 注入——历史由 trimmed messages 承担） */
+    public String contextBlockNoHistory() {
+        return this.<String>value("contextBlockNoHistory").orElse("");
     }
 
     public String streamingPrompt() {
@@ -62,15 +70,11 @@ public class ReActAgentState extends AgentState {
     }
 
     public int iteration() {
-        return this.<Number>value("iteration").map(Number::intValue).orElse(0);
-    }
-
-    public int toolFailures() {
-        return this.<Number>value("toolFailures").map(Number::intValue).orElse(0);
+        return counter(StateKeys.ITERATION);
     }
 
     public int retryCount() {
-        return this.<Number>value("retryCount").map(Number::intValue).orElse(0);
+        return counter(StateKeys.RETRY_COUNT);
     }
 
     public String errorCategory() {
@@ -86,7 +90,7 @@ public class ReActAgentState extends AgentState {
     }
 
     public int fatalErrorCount() {
-        return this.<Number>value("fatalErrorCount").map(Number::intValue).orElse(0);
+        return counter(StateKeys.FATAL_ERROR_COUNT);
     }
 
     public Long userId() {
@@ -98,15 +102,37 @@ public class ReActAgentState extends AgentState {
     }
 
     public int emptyResultRetries() {
-        return this.<Number>value("emptyResultRetries").map(Number::intValue).orElse(0);
+        return counter(StateKeys.EMPTY_RESULT_RETRIES);
     }
 
     public int replanCount() {
-        return this.<Number>value("replanCount").map(Number::intValue).orElse(0);
+        return counter(StateKeys.REPLAN_COUNT);
     }
 
     public int toolCallCount() {
-        return this.<Number>value("toolCallCount").map(Number::intValue).orElse(0);
+        return counter(StateKeys.TOOL_CALL_COUNT);
+    }
+
+    /**
+     * 当前轮次计数器 Map 的可变副本（节点增改后整体写回 {@code StateKeys.COUNTERS}）。
+     * 读取统一走 {@link #counter(String)}（含旧 checkpoint 顶层标量兼容）。
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> counters() {
+        Object raw = data().get(StateKeys.COUNTERS);
+        if (raw instanceof Map<?, ?> m) {
+            return new LinkedHashMap<>((Map<String, Object>) m);
+        }
+        return new LinkedHashMap<>();
+    }
+
+    /** 读计数器：优先 counters Map，兼容旧 checkpoint 的顶层标量字段。 */
+    private int counter(String key) {
+        Object raw = data().get(StateKeys.COUNTERS);
+        if (raw instanceof Map<?, ?> m && m.get(key) instanceof Number n) {
+            return n.intValue();
+        }
+        return this.<Number>value(key).map(Number::intValue).orElse(0);
     }
 
     public boolean pendingConfirmation() {
@@ -119,6 +145,26 @@ public class ReActAgentState extends AgentState {
 
     public String userChoice() {
         return this.<String>value("userChoice").orElse("");
+    }
+
+    /** 待确认的写操作（JSON：{"tool":..., "args":{...}}），写操作程序级确认用 */
+    public String pendingWrite() {
+        return this.<String>value("pendingWrite").orElse("");
+    }
+
+    /** 待用户从多个选项选择的选项（JSON 数组：[{"label":..., "value":...}]） */
+    public String pendingOptions() {
+        return this.<String>value("pendingOptions").orElse("");
+    }
+
+    /** 用户当前定位（前端地区中心坐标，如 "经度119.3026，纬度26.0855"） */
+    public String userLocation() {
+        return this.<String>value("userLocation").orElse("");
+    }
+
+    /** 用户当前地区 id（1拱墅/2鼓楼，前端地区选择器），供搜索工具按地区过滤 */
+    public Long userDistrictId() {
+        return this.<Number>value("userDistrictId").map(Number::longValue).orElse(null);
     }
 
     @SuppressWarnings("unchecked")
@@ -153,11 +199,28 @@ public class ReActAgentState extends AgentState {
         return m;
     }
 
-    /** 创建一个 role=tool 的消息 Map */
-    public static Map<String, String> toolMsg(String content) {
+    /** 创建一个 role=tool 的消息 Map（工具执行结果，标准消息通道） */
+    public static Map<String, String> toolMsg(String toolName, String toolCallId, String content) {
         Map<String, String> m = new LinkedHashMap<>();
         m.put("role", "tool");
+        m.put("toolName", toolName);
+        m.put("toolCallId", toolCallId);
         m.put("content", content);
+        return m;
+    }
+
+    /** 创建一个 role=assistant 且带 tool_calls 的消息 Map（JSON 数组字符串） */
+    public static Map<String, String> assistantToolMsg(String toolCallsJson) {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("role", "assistant");
+        m.put("toolCalls", toolCallsJson);
+        return m;
+    }
+
+    /** 创建一个 role=tool 的错误消息 Map */
+    public static Map<String, String> toolErrorMsg(String toolName, String toolCallId, String content) {
+        Map<String, String> m = toolMsg(toolName, toolCallId, content);
+        m.put("isError", "true");
         return m;
     }
 }

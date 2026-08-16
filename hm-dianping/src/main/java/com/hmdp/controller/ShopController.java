@@ -5,6 +5,7 @@ import cn.hutool.json.JSONUtil;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.service.IShopService;
+import com.hmdp.utils.IdObfuscator;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
@@ -35,14 +36,21 @@ public class ShopController {
     @Resource
     public StringRedisTemplate stringRedisTemplate;
 
+    @Resource
+    private IdObfuscator idObfuscator;
+
     /**
      * 根据id查询商铺信息
-     * @param id 商铺id
+     * @param id 商铺id（支持对外混淆 ID 或数据库真实 ID——普通前端传真实 ID 不受影响，Agent 卡片传混淆 ID）
      * @return 商铺详情数据
      */
     @GetMapping("/{id}")
-    public Result queryShopById(@PathVariable("id") Long id) {
-        return shopService.queryById(id);
+    public Result queryShopById(@PathVariable("id") String id) {
+        Long realId = idObfuscator.decodeOrId(id);
+        if (realId == null) {
+            return Result.fail("店铺不存在");
+        }
+        return shopService.queryById(realId);
     }
 
     /**
@@ -75,6 +83,12 @@ public class ShopController {
      * @param current 页码
      * @return 商铺列表
      */
+    /** 美食细分列表（含各细分门店数），供前端美食筛选 */
+    @GetMapping("/food-categories")
+    public Result foodCategories(@RequestParam(required = false) Long districtId) {
+        return shopService.foodCategories(districtId);
+    }
+
     @GetMapping("/of/type")
     public Result queryShopByType(
             @RequestParam("typeId") Integer typeId,
@@ -82,9 +96,10 @@ public class ShopController {
             @RequestParam(value = "x", required = false) Double x,
             @RequestParam(value = "y", required = false) Double y,
             @RequestParam(value = "districtId", required = false) Long districtId,
-            @RequestParam(value = "sortBy", required = false) String sortBy
+            @RequestParam(value = "sortBy", required = false) String sortBy,
+            @RequestParam(value = "foodCategory", required = false) String foodCategory
     ) {
-        return shopService.queryShopByType(typeId, current, x, y, districtId, sortBy);
+        return shopService.queryShopByType(typeId, current, x, y, districtId, sortBy, foodCategory);
     }
 
     /**
@@ -95,9 +110,10 @@ public class ShopController {
             @RequestParam("typeId") Integer typeId,
             @RequestParam(value = "current", defaultValue = "1") Integer current,
             @RequestParam(value = "districtId", required = false) Long districtId,
-            @RequestParam(value = "sortBy", required = false) String sortBy
+            @RequestParam(value = "sortBy", required = false) String sortBy,
+            @RequestParam(value = "foodCategory", required = false) String foodCategory
     ) {
-        return shopService.queryShopByType(typeId, current, null, null, districtId, sortBy);
+        return shopService.queryShopByType(typeId, current, null, null, districtId, sortBy, foodCategory);
     }
 
     /**

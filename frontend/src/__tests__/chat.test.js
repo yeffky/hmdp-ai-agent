@@ -41,9 +41,9 @@ describe('chat store', () => {
     await store.send('hi')
     expect(mockStreamChat).toHaveBeenCalledOnce()
     expect(store.sending).toBe(false)
-    // thinking 过程消息保留在列表（小灰条），最后是正式回答
-    expect(store.messages.map((m) => m.role)).toEqual(['user', 'thinking', 'assistant'])
-    expect(store.messages.find((m) => m.role === 'assistant').content).toBe('你好')
+    // 过程消息累积进「调用链」折叠消息，最后是正式回答
+    expect(store.messages.map((m) => m.role)).toEqual(['user', 'toolchain', 'assistant'])
+    expect(store.messages.find((m) => m.role === 'assistant').blocks[0].value).toBe('你好')
   })
 
   it('send() 时若已在发送则忽略', async () => {
@@ -63,7 +63,8 @@ describe('chat store', () => {
     mockStreamChat.mockRejectedValue(new Error('boom'))
     const store = useChatStore()
     await store.send('hi')
-    expect(store.messages[1]).toMatchObject({ role: 'assistant', content: '网络异常，请稍后再试' })
+    expect(store.messages[1]).toMatchObject({ role: 'assistant' })
+    expect(store.messages[1].blocks[0].value).toBe('网络异常，请稍后再试')
   })
 
   it('send() 401 时刷新 token 并用新 token 重试一次', async () => {
@@ -112,8 +113,48 @@ describe('chat store', () => {
     const store = useChatStore()
     await store.loadHistory()
     expect(store.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
-    expect(store.messages.map((m) => m.content)).toEqual(['u2', 'a2', 'u3', 'a3'])
+    expect(store.messages.map((m) => (m.role === 'user' ? m.content : m.blocks[0].value))).toEqual(['u2', 'a2', 'u3', 'a3'])
     expect(store.oldestId).toBe(2)
     expect(store.hasMore).toBe(false)
+  })
+
+  it('loadHistory 把历史卡片挂到 assistant 消息（卡片持久化重建）', async () => {
+    sessionStorage.setItem('token', 'tok')
+    const cards = [{ id: 1, name: '海底捞', reason: '评分最高（4.8）', petFriendly: true }]
+    chatApi.history.mockResolvedValue({
+      rounds: [{ id: 5, userMessage: 'q', assistantMessage: 'a', cards }],
+      hasMore: false
+    })
+    const store = useChatStore()
+    await store.loadHistory()
+    const a = store.messages.find((m) => m.role === 'assistant')
+    expect(a.blocks).toHaveLength(2)
+    expect(a.blocks[0].value).toBe('a')
+    expect(a.blocks[1].cards).toEqual(cards)
+  })
+
+  it('open() 切换账号时清空内存并按新用户重建', async () => {
+    sessionStorage.setItem('token', 'tok')
+    sessionStorage.setItem('userProfile', JSON.stringify({ id: 1 }))
+    chatApi.history.mockResolvedValue({
+      rounds: [{ id: 1, userMessage: 'u1', assistantMessage: 'a1' }],
+      hasMore: false
+    })
+    const store = useChatStore()
+    store.open()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(store.messages.map((m) => (m.role === 'user' ? m.content : m.blocks[0].value))).toEqual(['u1', 'a1'])
+    expect(store.loadedForUser).toBe('1')
+
+    // 切到账号 2：内存残留被清空，按新用户重新加载
+    sessionStorage.setItem('userProfile', JSON.stringify({ id: 2 }))
+    chatApi.history.mockResolvedValue({
+      rounds: [{ id: 9, userMessage: 'u9', assistantMessage: 'a9' }],
+      hasMore: false
+    })
+    store.open()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(store.messages.map((m) => (m.role === 'user' ? m.content : m.blocks[0].value))).toEqual(['u9', 'a9'])
+    expect(store.loadedForUser).toBe('2')
   })
 })

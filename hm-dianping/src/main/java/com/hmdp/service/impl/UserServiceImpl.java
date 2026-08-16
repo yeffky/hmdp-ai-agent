@@ -197,6 +197,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                         .get(BitFieldSubCommands.BitFieldType.unsigned(dayOfMonth))
                         .valueAt(0)
         );
+        log.info("当前日期对应bitmap:{}", result);
         if (result == null || result.isEmpty()) {
             return Result.ok(0);
         }
@@ -204,21 +205,30 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (num == null || num == 0) {
             return Result.ok(0);
         }
-        int count = 0;
-        // 循环遍历
-        while (true) {
-            // 与1做与运算，得到数字最后一个bit位  // 判断这个bit位是否为0
-            if ((num & 1) == 0) {
-                // 为0说明未签到
-                break;
-            } else {
-                // 不为0，说明已签到
-                count ++;
-                // 把数字右移一位，抛弃最后一个bit位，继续下一个bit位
-                num >>>= 1;
-            }
+        return Result.ok(countConsecutiveSigns(num));
+    }
+
+    /**
+     * 统计连续签到天数：从今天（LSB）往回数连续 1，遇 0 停止。
+     * 今天未签则右移一位从昨天起算（即统计过去几天连续签到的天数，不计今天）。
+     *
+     * 注意位序：BITFIELD GET u{day} 按 MSB-first（大端）解析，返回数值中
+     * bit0(LSB) = 今天，位越高日期越早（bit(day-1) = 1号）。故"今天"位于最低位。
+     *
+     * @param bitmap BITFIELD GET unsigned(dayOfMonth) 返回的数值
+     */
+    int countConsecutiveSigns(long bitmap) {
+        long bits = bitmap;
+        // 今天未签：丢掉今天的位，从昨天开始往回数
+        if ((bits & 1L) == 0) {
+            bits >>= 1;
         }
-        return Result.ok(count);
+        int count = 0;
+        while ((bits & 1L) != 0) {
+            count++;
+            bits >>= 1;
+        }
+        return count;
     }
 
     private User createUserWithCode(String phone) {

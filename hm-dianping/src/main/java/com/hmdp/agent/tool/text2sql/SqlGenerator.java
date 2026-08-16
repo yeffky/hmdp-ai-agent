@@ -1,6 +1,6 @@
 package com.hmdp.agent.tool.text2sql;
 
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -27,7 +27,7 @@ public class SqlGenerator {
 
     private static final Logger log = LoggerFactory.getLogger(SqlGenerator.class);
 
-    private final OpenAiChatModel model;
+    private final ChatModel model;
 
     // 危险关键词 — 包含即拒绝（用 \b 单词边界避免误匹配 create_time 等列名）
     private static final Pattern DANGEROUS_KEYWORDS = Pattern.compile(
@@ -48,9 +48,34 @@ public class SqlGenerator {
             "^\\s*(SELECT|WITH|EXPLAIN)\\b.*",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
-    public SqlGenerator(OpenAiChatModel model) {
+    public SqlGenerator(ChatModel model) {
         this.model = model;
     }
+
+    /**
+     * few-shot 示例库 — 各业务场景的典型查询模板，帮助 LLM 生成高质量 SQL。
+     * 示例中的字面值（店ID/用户ID/地区ID）为占位示意，LLM 需按实际查询替换。
+     */
+    private static final String FEW_SHOTS = """
+            ## 参考示例（示例数字为占位，按实际查询替换）
+            Q: 评分最高的10家火锅店
+            A: SELECT id, name, avg_price, score, comments FROM tb_shop WHERE type_id = 1 AND food_category = '火锅' ORDER BY score DESC, comments DESC LIMIT 10;
+
+            Q: 搜名字带"海底捞"的店
+            A: SELECT id, name, area, avg_price, score FROM tb_shop WHERE name LIKE '%海底捞%' LIMIT 20;
+
+            Q: 拱墅区能带宠物的餐厅
+            A: SELECT id, name, food_category, avg_price, pet_friendly FROM tb_shop WHERE type_id = 1 AND district_id = 1 AND pet_friendly = 1 LIMIT 20;
+
+            Q: 某家店的团购套餐
+            A: SELECT id, title, sub_title, pay_value, actual_value, type FROM tb_voucher WHERE shop_id = 5 AND status = 1 LIMIT 20;
+
+            Q: 某家店的网友评价（最近几条）
+            A: SELECT content, rating, create_time FROM tb_shop_comment WHERE shop_id = 5 ORDER BY create_time DESC LIMIT 5;
+
+            Q: 某用户待支付的订单
+            A: SELECT o.id, v.title, o.pay_type, o.status FROM tb_voucher_order o JOIN tb_voucher v ON o.voucher_id = v.id WHERE o.user_id = 1001 AND o.status = 1 ORDER BY o.create_time DESC LIMIT 20;
+            """;
 
     /**
      * 生成并校验 SQL。
@@ -82,6 +107,44 @@ public class SqlGenerator {
         return sql;
     }
 
+    /**
+     * 执行失败自修复：把失败的 SQL + 数据库报错回喂 LLM，让其修正后重新校验。
+     *
+     * @param failedSql 执行失败的 SQL
+     * @param error     数据库返回的错误信息
+     */
+    public String fixSql(String schema, String userQuery, Long userId, Set<String> allowedTables,
+                         String failedSql, String error) throws SqlRejectedException {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 数据库表结构\n").append(schema).append("\n");
+        sb.append("## 用户查询\n").append(userQuery).append("\n");
+        if (userId != null) {
+            sb.append("\n当前用户ID: ").append(userId).append("（查询用户自身数据时请用此ID）");
+        }
+        sb.append("\n## 之前生成的 SQL（执行失败）\n").append(failedSql).append("\n");
+        sb.append("\n## 执行报错\n").append(truncate(error, 500)).append("\n");
+        sb.append("""
+
+                ## 修复要求
+                - 根据报错修正 SQL（常见原因：列名写错、表名写错、类型不匹配、缺少别名、引号问题、列不在 schema 中）
+                - 只能使用上面表结构中列出的列名，禁止编造
+                - 只输出修正后的单条 SELECT，不要解释""");
+
+        String sql;
+        try {
+            ChatResponse resp = model.chat(List.of(
+                    SystemMessage.from("你是SQL修复器。根据错误修正SQL，只输出一行纯SQL，不要markdown代码块，不要解释。"),
+                    UserMessage.from(sb.toString())));
+            sql = cleanSql(resp.aiMessage().text());
+            log.info("SqlGenerator fix raw: {}", sql);
+        } catch (Exception e) {
+            throw new SqlRejectedException("LLM修复失败: " + e.getMessage());
+        }
+
+        validate(sql, allowedTables);
+        return sql;
+    }
+
     private String buildPrompt(String schema, String userQuery, Long userId) {
         StringBuilder sb = new StringBuilder();
         sb.append("## 数据库表结构\n");
@@ -92,6 +155,7 @@ public class SqlGenerator {
             sb.append("\n\n当前用户ID: ").append(userId)
               .append("（查询用户自身数据时请用此ID）");
         }
+        sb.append("\n\n").append(FEW_SHOTS);
         sb.append("""
 
                 ## 规则

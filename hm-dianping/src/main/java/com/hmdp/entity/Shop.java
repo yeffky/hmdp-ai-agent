@@ -49,6 +49,11 @@ public class Shop implements Serializable {
     private Long districtId;
 
     /**
+     * 美食细分（美食类门店）：奶茶咖啡/快餐小吃/火锅/烧烤烤肉/地方菜系/异域料理/自助餐/海鲜/面包蛋糕/食品生鲜
+     */
+    private String foodCategory;
+
+    /**
      * 商铺图片，多个图片以','隔开
      */
     private String images;
@@ -102,6 +107,31 @@ public class Shop implements Serializable {
      * 是否支持排队取号：1=支持，0=不支持
      */
     private Integer queueEnabled;
+
+    /**
+     * 菜品/环境/服务描述（美食类门店规则生成）
+     */
+    private String description;
+
+    /**
+     * 是否支持停车：1=有，0=无
+     */
+    private Integer hasParking;
+
+    /**
+     * 是否儿童友好：1=是，0=否
+     */
+    private Integer childFriendly;
+
+    /**
+     * 是否宠物友好：1=是，0=否
+     */
+    private Integer petFriendly;
+
+    /**
+     * 最多容纳人数
+     */
+    private Integer maxSeats;
 
     /**
      * 创建时间

@@ -4,10 +4,11 @@ import com.hmdp.agent.graph.nodes.*;
 import com.hmdp.agent.graph.state.ReActAgentState;
 import com.hmdp.agent.graph.state.ReActStateSerializer;
 import com.hmdp.agent.graph.state.StateSchema;
+import com.hmdp.agent.memory.context.ContextEditor;
 import com.hmdp.agent.memory.context.ContextNode;
 import com.hmdp.agent.memory.context.SlidingWindowManager;
 import com.hmdp.agent.memory.context.UserStore;
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.ChatModel;
 import org.bsc.langgraph4j.langchain4j.tool.LC4jToolService;
 import org.bsc.langgraph4j.CompileConfig;
 import org.bsc.langgraph4j.CompiledGraph;
@@ -48,15 +49,12 @@ public class GraphConfig {
     @Value("${agent.graph.max-retries:3}")
     private int maxRetries;
 
-    @Value("${agent.graph.llm-error-classify:true}")
-    private boolean llmErrorClassify;
-
     @Autowired
     @Qualifier("postgresDataSource")
     private DataSource postgresDataSource;
 
     @Autowired
-    private OpenAiChatModel model;
+    private ChatModel model;
     @Autowired
     private LC4jToolService toolService;
     @Autowired
@@ -69,15 +67,43 @@ public class GraphConfig {
     @Autowired
     private com.hmdp.agent.tool.ShopTypeProvider shopTypeProvider;
 
+    @Autowired
+    private com.hmdp.agent.skill.SkillRegistry skillRegistry;
+
+    @Autowired
+    private com.hmdp.agent.memory.reflection.ReflectionStore reflectionStore;
+
+    @Autowired
+    private com.hmdp.agent.memory.context.ProfileExtractor profileExtractor;
+
+    @Autowired
+    private ContextEditor contextEditor;
+
+    @Autowired
+    private com.hmdp.agent.memory.context.CompressionConfig compressionConfig;
+
+    @Autowired
+    private org.springframework.data.redis.core.StringRedisTemplate stringRedisTemplate;
+
+    @Autowired
+    private com.hmdp.agent.config.ToolCacheProperties toolCacheProperties;
+
+    @Autowired
+    private com.hmdp.utils.IdObfuscator idObfuscator;
+
     @Bean("reactGraph")
     public CompiledGraph<ReActAgentState> reactGraph() throws Exception {
-        ContextNode contextNode = new ContextNode(windowManager, userStore, chatHistoryRepo);
-        PlannerNode planner = new PlannerNode(model, maxIterations, toolService, shopTypeProvider);
-        ExecutorNode executor = new ExecutorNode(model, toolService, llmErrorClassify, shopTypeProvider);
-        ObserverNode observer = new ObserverNode(model, maxIterations);
-        JudgeNode judgeNode = new JudgeNode(model);
+        ContextNode contextNode = new ContextNode(windowManager, userStore, chatHistoryRepo, skillRegistry,
+                reflectionStore, compressionConfig);
+        PlannerNode planner = new PlannerNode(model, maxIterations, toolService, shopTypeProvider, skillRegistry,
+                profileExtractor);
+        // Plan-Action：agent 只决策，工具执行在 ToolNode（Action）；
+        // 充分性判断下沉到 ReAct 决策循环自身（skill SOP「结果不匹配就重查」+ 观察自评）
+        ToolExecutor toolExecutor = new ToolExecutor(toolService, stringRedisTemplate, toolCacheProperties);
+        AgentNode agent = new AgentNode(model, toolService, maxRetries, skillRegistry, toolExecutor, contextEditor,
+                idObfuscator);
+        ToolNode toolNode = new ToolNode(toolExecutor);
         AnswerNode answerNode = new AnswerNode(model);
-        RetryGateNode retryGate = new RetryGateNode(maxRetries);
 
         StateSerializer<ReActAgentState> serializer = new ReActStateSerializer();
 
@@ -86,63 +112,42 @@ public class GraphConfig {
                 serializer
         );
 
-        graph.addNode("context",  AsyncNodeAction.node_async(contextNode))
-             .addNode("planner",  AsyncNodeAction.node_async(planner))
-             .addNode("executor", AsyncNodeAction.node_async(executor))
-             .addNode("observer", AsyncNodeAction.node_async(observer))
-             .addNode("judgeNode", AsyncNodeAction.node_async(judgeNode))
-             .addNode("answer",   AsyncNodeAction.node_async(answerNode))
-             .addNode("retryGate", AsyncNodeAction.node_async(retryGate));
+        graph.addNode(NodeNames.CONTEXT,  AsyncNodeAction.node_async(contextNode))
+             .addNode(NodeNames.PLANNER,  AsyncNodeAction.node_async(planner))
+             .addNode(NodeNames.AGENT,    AsyncNodeAction.node_async(agent))
+             .addNode(NodeNames.TOOLS,    AsyncNodeAction.node_async(toolNode))
+             .addNode(NodeNames.ANSWER,   AsyncNodeAction.node_async(answerNode));
 
-        graph.addEdge(GraphDefinition.START, "context");
-        graph.addEdge("context", "planner");
-        graph.addConditionalEdges("planner",
+        graph.addEdge(GraphDefinition.START, NodeNames.CONTEXT);
+        graph.addEdge(NodeNames.CONTEXT, NodeNames.PLANNER);
+
+        // planner：初始规划 → agent（执行计划）；简单/ask_user/cannot_fulfill/迭代超限 → answer；replan 自环
+        graph.addConditionalEdges(NodeNames.PLANNER,
                 s -> CompletableFuture.completedFuture(
-                        s.nextNode() != null ? s.nextNode() : "executor"),
-                Map.of("executor", "executor",
-                        "answer", "answer",
-                        "planner", "planner"));
+                        s.nextNode() != null ? s.nextNode() : NodeNames.AGENT),
+                Map.of(NodeNames.AGENT, NodeNames.AGENT,
+                        NodeNames.ANSWER, NodeNames.ANSWER,
+                        NodeNames.PLANNER, NodeNames.PLANNER));
 
-        // executor 条件路由：observer（正常）/ retryGate（可重试）/ judgeNode（参数缺失等）/ answer（致命）
-        graph.addConditionalEdges("executor",
+        // agent（决策）：有 tool call → tools；无 tool call / 挂起 / 上限 → answer；恢复后 → agent 自环；
+        // 写确认时用户调整参数 → planner 重新规划；用户开启全新对话（非回应挂起）→ context 重新跑图
+        graph.addConditionalEdges(NodeNames.AGENT,
                 s -> CompletableFuture.completedFuture(
-                        s.nextNode() != null ? s.nextNode() : "observer"),
-                Map.of("observer", "observer",
-                        "retryGate", "retryGate",
-                        "judgeNode", "judgeNode",
-                        "answer", "answer",
-                        "executor", "executor"));
+                        s.nextNode() != null ? s.nextNode() : NodeNames.ANSWER),
+                Map.of(NodeNames.TOOLS, NodeNames.TOOLS,
+                        NodeNames.ANSWER, NodeNames.ANSWER,
+                        NodeNames.AGENT, NodeNames.AGENT,
+                        NodeNames.PLANNER, NodeNames.PLANNER,
+                        NodeNames.CONTEXT, NodeNames.CONTEXT));
 
-        // retryGate 条件路由：executor（继续重试）/ answer（重试耗尽）
-        graph.addConditionalEdges("retryGate",
+        // tools（Action）：执行完回 agent 继续决策
+        graph.addConditionalEdges(NodeNames.TOOLS,
                 s -> CompletableFuture.completedFuture(
-                        s.nextNode() != null ? s.nextNode() : "answer"),
-                Map.of("executor", "executor",
-                        "answer", "answer",
-                        "retryGate", "retryGate"));
+                        s.nextNode() != null ? s.nextNode() : NodeNames.AGENT),
+                Map.of(NodeNames.AGENT, NodeNames.AGENT,
+                        NodeNames.ANSWER, NodeNames.ANSWER));
 
-        // observer 路由：executor（继续执行）/ judgeNode（判断充分性）/ retryGate（错误重试）/ answer（透传）
-        // observer 自环：用于 checkpoint resume 时直接回到 observer 自身
-        // observer→planner：确认恢复时用户回复与上下文不匹配，ObserverNode 返回 nextNode=planner 要求重新规划
-        graph.addConditionalEdges("observer",
-                s -> CompletableFuture.completedFuture(
-                        s.nextNode() != null ? s.nextNode() : "judgeNode"),
-                Map.of("executor", "executor",
-                        "judgeNode", "judgeNode",
-                        "retryGate", "retryGate",
-                        "answer", "answer",
-                        "observer", "observer",
-                        "planner", "planner"));
-
-        // judgeNode 两路路由：answer（充分/需用户补充）/ planner（不足，重新规划）
-        graph.addConditionalEdges("judgeNode",
-                s -> CompletableFuture.completedFuture(
-                        s.nextNode() != null ? s.nextNode() : "answer"),
-                Map.of("answer", "answer",
-                        "planner", "planner",
-                        "judgeNode", "judgeNode"));
-
-        graph.addEdge("answer", GraphDefinition.END);
+        graph.addEdge(NodeNames.ANSWER, GraphDefinition.END);
 
         // ======== Checkpoint Saver ========
         BaseCheckpointSaver saver = createCheckpointSaver(serializer);

@@ -2,6 +2,7 @@ package com.hmdp.controller;
 
 import com.hmdp.dto.Result;
 import com.hmdp.service.IQueueTicketService;
+import com.hmdp.utils.IdObfuscator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
@@ -18,11 +19,14 @@ public class QueueTicketController {
     @Resource
     private IQueueTicketService queueTicketService;
 
-    /** 用户取号 */
+    @Resource
+    private IdObfuscator idObfuscator;
+
+    /** 用户取号；shopId 支持对外混淆 ID 或数据库真实 ID */
     @PostMapping("/take")
     public Result takeNumber(@RequestBody Map<String, Object> body) {
         try {
-            Long shopId = toLong(body.get("shopId"));
+            Long shopId = idObfuscator.decodeOrId(body.get("shopId") == null ? null : String.valueOf(body.get("shopId")));
             Integer peopleCount = body.get("peopleCount") != null
                     ? ((Number) body.get("peopleCount")).intValue() : 2;
             String remark = body.get("remark") != null ? body.get("remark").toString() : null;
@@ -49,11 +53,15 @@ public class QueueTicketController {
         }
     }
 
-    /** 查询商铺排队情况 */
+    /** 查询商铺排队情况；shopId 支持对外混淆 ID 或数据库真实 ID */
     @GetMapping("/shop/{shopId}")
-    public Result queryShopQueue(@PathVariable Long shopId) {
+    public Result queryShopQueue(@PathVariable String shopId) {
         try {
-            Map<String, Object> info = queueTicketService.queryShopQueue(shopId);
+            Long realShopId = idObfuscator.decodeOrId(shopId);
+            if (realShopId == null) {
+                return Result.fail("店铺不存在");
+            }
+            Map<String, Object> info = queueTicketService.queryShopQueue(realShopId);
             return Result.ok(info);
         } catch (Exception e) {
             log.error("查询商铺排队失败", e);
@@ -73,21 +81,19 @@ public class QueueTicketController {
         }
     }
 
-    /** 商家叫号 */
+    /** 商家叫号；shopId 支持对外混淆 ID 或数据库真实 ID */
     @PutMapping("/call/{shopId}")
-    public Result callNextNumber(@PathVariable Long shopId) {
+    public Result callNextNumber(@PathVariable String shopId) {
         try {
-            Map<String, Object> result = queueTicketService.callNextNumber(shopId);
+            Long realShopId = idObfuscator.decodeOrId(shopId);
+            if (realShopId == null) {
+                return Result.fail("店铺不存在");
+            }
+            Map<String, Object> result = queueTicketService.callNextNumber(realShopId);
             return Result.ok(result);
         } catch (Exception e) {
             log.error("叫号失败", e);
             return Result.fail(e.getMessage());
         }
-    }
-
-    private static Long toLong(Object val) {
-        if (val == null) return null;
-        if (val instanceof Number) return ((Number) val).longValue();
-        return Long.parseLong(val.toString());
     }
 }

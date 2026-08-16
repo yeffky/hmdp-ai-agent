@@ -1,7 +1,10 @@
 package com.hmdp.agent.tool;
 
 import cn.hutool.json.JSONUtil;
+import com.hmdp.entity.Shop;
+import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IQueueTicketService;
+import com.hmdp.utils.IdObfuscator;
 import com.hmdp.utils.UserHolder;
 import com.hmdp.agent.tool.param.ToolParams;
 import dev.langchain4j.agent.tool.P;
@@ -14,6 +17,7 @@ import java.util.Map;
 /**
  * 排队取号工具 — 供 ReAct Agent 调用。
  * 用户可以通过对话让 Agent 帮其在指定商铺排队取号、查询排队进度、取消排队。
+ * 工具参数中的 shopId 为对外混淆 ID（Sqids），内部自动还原为数据库 ID。
  */
 @Component
 public class QueueTicketTool {
@@ -21,14 +25,21 @@ public class QueueTicketTool {
     @Resource
     private IQueueTicketService queueTicketService;
 
+    @Resource
+    private ShopMapper shopMapper;
+
+    @Resource
+    private IdObfuscator idObfuscator;
+
     @Tool("用户在指定商铺排队取号。需要提供商铺ID和用餐人数，返回排队号和前方等待桌数。如果用户未指定用餐人数则默认为2人。")
     public String takeQueueNumber(
-            @P("商铺ID（必填，正整数）") Long shopId,
+            @P("商铺ID（必填，对外混淆ID）") String shopId,
             @P("用餐人数（可选，默认2，必须≥1）") Integer peopleCount) {
-        if (shopId == null) {
+        Long realShopId = idObfuscator.decodeOrId(shopId);
+        if (realShopId == null) {
             return "请提供要排队的商铺ID。如果用户没有指明具体商铺，请先让用户选择商铺。";
         }
-        ToolParams.positive(shopId, "商铺ID");
+        ToolParams.positive(realShopId, "商铺ID");
         if (peopleCount != null) {
             ToolParams.peopleCount(peopleCount);
         }
@@ -41,7 +52,7 @@ public class QueueTicketTool {
         }
 
         try {
-            Map<String, Object> result = queueTicketService.takeNumber(shopId, peopleCount, null);
+            Map<String, Object> result = queueTicketService.takeNumber(realShopId, peopleCount, null);
             return JSONUtil.toJsonPrettyStr(result);
         } catch (Exception e) {
             return "取号失败: " + e.getMessage();
@@ -61,6 +72,9 @@ public class QueueTicketTool {
             if (ticket == null) {
                 return "您当前没有排队记录。";
             }
+            // 补店名/地址：排队记录只有 shopId，不加店名 Agent 只能靠猜，会答错店名（如把 A 店当 B 店）
+            enrichShopInfo(ticket);
+            obfuscateShopId(ticket);
             return JSONUtil.toJsonPrettyStr(ticket);
         } catch (Exception e) {
             return "查询排队状态失败: " + e.getMessage();
@@ -69,13 +83,17 @@ public class QueueTicketTool {
 
     @Tool("查询指定商铺的排队情况，包括当前叫号、等待桌数、等待列表。用户可以据此判断是否需要排队以及预计等待时间。")
     public String queryShopQueueStatus(
-            @P("商铺ID") Long shopId) {
-        if (shopId == null) {
+            @P("商铺ID（对外混淆ID）") String shopId) {
+        Long realShopId = idObfuscator.decodeOrId(shopId);
+        if (realShopId == null) {
             return "请提供商铺ID以查询排队情况。";
         }
 
         try {
-            Map<String, Object> result = queueTicketService.queryShopQueue(shopId);
+            Map<String, Object> result = queueTicketService.queryShopQueue(realShopId);
+            // 补店名（同 queryMyQueueStatus）：排队信息只有 shopId，确认提示/回答缺店名只能靠猜
+            enrichShopInfo(result);
+            obfuscateShopId(result);
             return JSONUtil.toJsonPrettyStr(result);
         } catch (Exception e) {
             return "查询商铺排队失败: " + e.getMessage();
@@ -106,6 +124,33 @@ public class QueueTicketTool {
             return ok ? "已成功取消排队。" : "取消排队失败，请稍后重试。";
         } catch (Exception e) {
             return "取消排队失败: " + e.getMessage();
+        }
+    }
+
+    /** 排队记录只有 shopId，补上店名/地址，避免 Agent 猜错店名（如把 A 店当 B 店）。 */
+    private void enrichShopInfo(Map<String, Object> ticket) {
+        Object shopIdObj = ticket.get("shopId");
+        if (shopIdObj == null) return;
+        try {
+            Long shopId = Long.valueOf(shopIdObj.toString());
+            Shop shop = shopMapper.selectById(shopId);
+            if (shop != null) {
+                ticket.put("shopName", shop.getName());
+                ticket.put("shopAddress", shop.getAddress());
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 把返回结果里的 shopId 换成对外混淆 ID（ticketId 为 UUID，无需混淆）。 */
+    private void obfuscateShopId(Map<String, Object> ticket) {
+        if (ticket == null) return;
+        Object shopIdObj = ticket.get("shopId");
+        if (shopIdObj == null) return;
+        try {
+            Long shopId = Long.valueOf(shopIdObj.toString());
+            ticket.put("shopId", idObfuscator.encode(shopId));
+        } catch (Exception ignored) {
         }
     }
 

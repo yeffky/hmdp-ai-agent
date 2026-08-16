@@ -1,6 +1,6 @@
 package com.hmdp.agent.tool.text2sql;
 
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -30,11 +30,14 @@ public class TableSchemaService {
     private static final String REDIS_KEY_TABLE_NAMES = "hmdp:table_names";
     private static final long TABLE_NAMES_TTL_HOURS = 4;
 
-    private final OpenAiChatModel model;
+    private static final String REDIS_KEY_COLUMNS = "hmdp:columns:";
+    private static final long COLUMNS_TTL_HOURS = 4;
+
+    private final ChatModel model;
     private final StringRedisTemplate redis;
     private final JdbcTemplate mysql;
 
-    public TableSchemaService(OpenAiChatModel model, StringRedisTemplate redis, JdbcTemplate mysql) {
+    public TableSchemaService(ChatModel model, StringRedisTemplate redis, JdbcTemplate mysql) {
         this.model = model;
         this.redis = redis;
         this.mysql = mysql;
@@ -60,8 +63,24 @@ public class TableSchemaService {
      * @return key=表名, value=列定义列表，按表分组
      */
     public Map<String, List<ColDef>> selectAndFetchSchema(String userQuery) {
-        // 1. 获取表名列表（Redis 缓存 → DB 兜底）
+        return selectAndFetchSchema(userQuery, null);
+    }
+
+    /**
+     * 根据用户查询选择相关表并返回其完整列结构（表域白名单过滤版）。
+     *
+     * @param userQuery     用户自然语言查询
+     * @param allowedTables 允许查询的表集合（表域白名单）；null/空表示不过滤（兼容旧调用）
+     * @return key=表名, value=列定义列表，按表分组
+     */
+    public Map<String, List<ColDef>> selectAndFetchSchema(String userQuery, Set<String> allowedTables) {
+        // 1. 获取表名列表（Redis 缓存 → DB 兜底），并应用表域白名单过滤（隐私表不进 LLM 候选）
         List<TableSummary> allTables = getTableList();
+        if (allowedTables != null && !allowedTables.isEmpty()) {
+            allTables = allTables.stream()
+                    .filter(t -> allowedTables.stream().anyMatch(a -> a.equalsIgnoreCase(t.name)))
+                    .collect(Collectors.toList());
+        }
         for (TableSummary table : allTables) {
             log.info("table intro:{}", table.toString());
         }
@@ -174,8 +193,14 @@ public class TableSchemaService {
     // ======== 第三步：查列结构 ========
 
     private List<ColDef> fetchColumns(String tableName) {
+        // 列结构 Redis 缓存（减少 DB 查询 + schemaText 重建，省 token）
+        String cacheKey = REDIS_KEY_COLUMNS + tableName;
+        String cached = redis.opsForValue().get(cacheKey);
+        if (cached != null && !cached.isEmpty()) {
+            return deserializeColDefs(cached);
+        }
         try {
-            return mysql.query(
+            List<ColDef> cols = mysql.query(
                     "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_COMMENT, IS_NULLABLE, COLUMN_KEY " +
                     "FROM information_schema.COLUMNS " +
                     "WHERE TABLE_SCHEMA = 'hmdp' AND TABLE_NAME = ? " +
@@ -189,10 +214,34 @@ public class TableSchemaService {
                     ),
                     tableName
             );
+            if (!cols.isEmpty()) {
+                redis.opsForValue().set(cacheKey, serializeColDefs(cols), COLUMNS_TTL_HOURS, TimeUnit.HOURS);
+            }
+            return cols;
         } catch (Exception e) {
             log.error("Failed to fetch columns for {}", tableName, e);
             return List.of();
         }
+    }
+
+    private String serializeColDefs(List<ColDef> cols) {
+        StringBuilder sb = new StringBuilder();
+        for (ColDef c : cols) {
+            sb.append(c.name).append('|').append(c.type).append('|')
+              .append(c.comment).append('|').append(c.primaryKey).append('|').append(c.nullable).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private List<ColDef> deserializeColDefs(String s) {
+        List<ColDef> list = new ArrayList<>();
+        for (String line : s.split("\n")) {
+            String[] p = line.split("\\|", 5);
+            if (p.length >= 5) {
+                list.add(new ColDef(p[0], p[1], p[2], Boolean.parseBoolean(p[3]), Boolean.parseBoolean(p[4])));
+            }
+        }
+        return list;
     }
 
     /** 格式化 schema 为 LLM prompt 文本 */

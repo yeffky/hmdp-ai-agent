@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.Resource;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 滑动窗口管理器 — 集成压缩到图状态流中。
@@ -23,8 +25,11 @@ public class SlidingWindowManager {
     @Resource
     private CompressionConfig config;
 
-    /** 无条件硬上限：checkpoint 中最多保留的消息条数（约 50 轮对话），防止 JSON 膨胀拖慢反序列化 */
-    private static final int HARD_MESSAGE_CAP = 100;
+    /** 无条件硬上限：checkpoint 中最多保留的消息条数（约 50 条，含 tool 轨迹），防止 JSON 膨胀拖慢反序列化 */
+    private static final int HARD_MESSAGE_CAP = 50;
+
+    /** 异步压缩结果的摘要缓存（userId → 最新摘要），供下一次上下文构建使用，不阻塞图流程 */
+    private final Map<Long, String> asyncSummaries = new ConcurrentHashMap<>();
 
     /**
      * 对当前 Agent 状态执行上下文管理。
@@ -71,21 +76,32 @@ public class SlidingWindowManager {
             return updates;
         }
 
-        // 执行压缩检查（传入 userId 用于画像提取）
-        ContextCompressor.CompressionResult result =
-                compressor.compressIfNeeded(msgList, currentSummary, userId(state));
-
-        // 如果摘要变化，更新
-        if (result.getSummary() != null && !result.getSummary().equals(currentSummary)) {
-            updates.put("compressedSummary", result.getSummary());
-            log.info("Compressed summary updated ({} chars)", result.getSummary().length());
+        // 若有上一次异步压缩的摘要，优先作为本轮上下文摘要（不阻塞、不等待 LLM）
+        Long uid = userId(state);
+        String asyncSum = uid != null ? asyncSummaries.get(uid) : null;
+        if (asyncSum != null && !asyncSum.equals(currentSummary)) {
+            updates.put("compressedSummary", asyncSum);
+            currentSummary = asyncSum;
+            log.info("Using async compressed summary ({} chars) for uid={}", asyncSum.length(), uid);
         }
 
-        // 如果消息被截断，替换消息列表
-        if (result.getKeptMessages().size() < msgList.size()) {
-            updates.put("messages", result.getKeptMessages());
-            log.info("Messages trimmed from {} to {} after compression",
-                    msgList.size(), result.getKeptMessages().size());
+        // 异步压缩：LLM 摘要 + 画像提取放到后台线程，不阻塞图流程（context 节点立即返回，前端有反馈）。
+        // 结果缓存到 asyncSummaries，下一次上下文构建时生效。
+        if (config.isEnabled()) {
+            final List<Map<String, String>> msgs = new ArrayList<>(msgList);
+            final String prevSummary = currentSummary;
+            final Long fuid = uid;
+            CompletableFuture.runAsync(() -> {
+                try {
+                    ContextCompressor.CompressionResult r = compressor.compressIfNeeded(msgs, prevSummary, fuid);
+                    if (r.getSummary() != null && !r.getSummary().isEmpty() && fuid != null) {
+                        asyncSummaries.put(fuid, r.getSummary());
+                        log.info("Async compression done: {} chars for uid={}", r.getSummary().length(), fuid);
+                    }
+                } catch (Exception ex) {
+                    log.warn("Async compression failed: {}", ex.getMessage());
+                }
+            });
         }
 
         return updates;

@@ -1,12 +1,13 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import AppHeader from '../../components/AppHeader.vue'
 import AppTabbar from '../../components/AppTabbar.vue'
 import AppIcon from '../../components/AppIcon.vue'
 import EmptyState from '../../components/EmptyState.vue'
-import { blogApi, userApi } from '../../api'
+import { blogApi, userApi, shopCommentApi } from '../../api'
+import { relativeTime } from '../../utils/format'
 import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
@@ -15,6 +16,9 @@ const userStore = useUserStore()
 const info = ref(null)
 const blogs = ref([])
 const feed = ref([])
+const comments = ref([])
+const commentsMore = ref(false)
+const commentsPage = ref(1)
 const signCount = ref(0)
 const signToday = ref(false)
 const signing = ref(false)
@@ -23,6 +27,27 @@ const tab = ref('notes')
 const feedParams = ref({ minTime: 0, offset: 0 })
 const feedMore = ref(true)
 const loadingFeed = ref(false)
+const feedSentinel = ref(null)
+let feedObserver = null
+
+// 滚动分页：底部哨兵进入视口自动加载下一页
+function observeFeedSentinel() {
+  if (feedObserver) feedObserver.disconnect()
+  if (!feedSentinel.value) return
+  feedObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries[0].isIntersecting && feedMore.value && !loadingFeed.value) {
+        loadFeed()
+      }
+    },
+    { rootMargin: '200px' }
+  )
+  feedObserver.observe(feedSentinel.value)
+}
+
+onUnmounted(() => {
+  if (feedObserver) feedObserver.disconnect()
+})
 
 onMounted(async () => {
   if (!userStore.isLoggedIn) {
@@ -41,10 +66,24 @@ onMounted(async () => {
     blogs.value = myBlogs || []
     signCount.value = count || 0
     signToday.value = !!today
+    loadComments(1)
   } catch {
     /* 加载失败 */
   }
 })
+
+async function loadComments(page = 1) {
+  try {
+    const res = await shopCommentApi.ofUser(userStore.profile.id, page)
+    if (!res) return
+    const list = res.list || []
+    comments.value = page === 1 ? list : comments.value.concat(list)
+    commentsMore.value = !!res.hasMore
+    commentsPage.value = page
+  } catch {
+    /* 加载失败 */
+  }
+}
 
 async function doSign() {
   if (signing.value || signToday.value) return
@@ -82,12 +121,14 @@ async function loadFeed(clear = false) {
     feedMore.value = false
   } finally {
     loadingFeed.value = false
+    nextTick(observeFeedSentinel)
   }
 }
 
 function onTabChange(name) {
   tab.value = name
   if (name === 'follow' && feed.value.length === 0) loadFeed(true)
+  if (name === 'comments' && comments.value.length === 0) loadComments(1)
 }
 
 function logout() {
@@ -120,12 +161,6 @@ function toBlog(b) {
         <button class="btn-ghost me__edit" @click="router.push('/me/edit')">编辑资料</button>
       </section>
 
-      <!-- 我的订单入口 -->
-      <section class="me__orders-entry ticket" @click="router.push('/me/orders')">
-        <span>我的订单</span>
-        <span class="me__orders-arrow"><AppIcon name="chevron" :size="14" /></span>
-      </section>
-
       <!-- 签到条 -->
       <section class="me__sign">
         <div>
@@ -142,15 +177,14 @@ function toBlog(b) {
       <!-- 统计 -->
       <section class="me__stats">
         <div><b class="num">{{ blogs.length }}</b><small>笔记</small></div>
-        <div><b class="num">{{ info ? info.fans : 0 }}</b><small>粉丝</small></div>
-        <div><b class="num">{{ info ? info.followee : 0 }}</b><small>关注</small></div>
+        <div class="me__stats-link" @click="router.push('/me/fans')"><b class="num">{{ info ? info.fans : 0 }}</b><small>粉丝</small></div>
+        <div class="me__stats-link" @click="router.push('/me/follows')"><b class="num">{{ info ? info.followee : 0 }}</b><small>关注</small></div>
       </section>
 
       <!-- 页签 -->
       <nav class="me__tabs">
         <button :class="{ 'is-active': tab === 'notes' }" @click="onTabChange('notes')">笔记</button>
         <button :class="{ 'is-active': tab === 'comments' }" @click="onTabChange('comments')">评价</button>
-        <button :class="{ 'is-active': tab === 'fans' }" @click="onTabChange('fans')">粉丝</button>
         <button :class="{ 'is-active': tab === 'follow' }" @click="onTabChange('follow')">关注</button>
       </nav>
 
@@ -166,10 +200,20 @@ function toBlog(b) {
       </div>
 
       <!-- 评价 -->
-      <EmptyState v-else-if="tab === 'comments'" icon="chat" text="还没有写过评价" />
-
-      <!-- 粉丝 -->
-      <EmptyState v-else-if="tab === 'fans'" icon="user" text="还没有粉丝" />
+      <div v-else-if="tab === 'comments'">
+        <div v-if="comments.length" class="me__comments">
+          <div v-for="c in comments" :key="c.id" class="me__comment ticket" @click="router.push(`/shop/${c.shopId}`)">
+            <div class="me__comment-top">
+              <b>{{ c.shopName }}</b>
+              <span class="me__comment-rating">{{ '★'.repeat(c.rating || 5) }} {{ c.rating || 5 }}分</span>
+            </div>
+            <p class="me__comment-text">{{ c.content }}</p>
+            <small class="me__comment-time">{{ relativeTime(c.createTime) }}</small>
+          </div>
+          <button v-if="commentsMore" class="me__more" @click="loadComments(commentsPage + 1)">加载更多</button>
+        </div>
+        <EmptyState v-else icon="chat" text="还没有写过评价" />
+      </div>
 
       <!-- 关注动态 -->
       <div v-else>
@@ -183,8 +227,8 @@ function toBlog(b) {
           </article>
         </div>
         <EmptyState v-else icon="refresh" text="关注的人还没有更新" action="刷新" @action="loadFeed(true)" />
-        <p v-if="loadingFeed" class="list-end">加载中…</p>
-        <p v-else-if="!feedMore && feed.length" class="list-end">— 到底啦 —</p>
+        <p v-if="!feedMore && feed.length" class="list-end">— 到底啦 —</p>
+        <div ref="feedSentinel" class="feed-sentinel" />
       </div>
     </template>
 
@@ -218,20 +262,6 @@ function toBlog(b) {
 .me__who b { font-size: var(--text-lg); }
 .me__who small { display: flex; align-items: center; gap: 2px; color: var(--ink-3); font-size: var(--text-xs); }
 .me__edit { font-size: var(--text-xs); }
-
-.me__orders-entry {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: var(--gap-md);
-  padding: 14px var(--gap-md);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  font-weight: 700;
-  cursor: pointer;
-}
-.me__orders-arrow { display: inline-flex; color: var(--ink-3); }
 
 .me__sign {
   display: flex;
@@ -334,4 +364,26 @@ function toBlog(b) {
   -webkit-box-orient: vertical;
 }
 .me__feed-info span { color: var(--ink-3); font-size: var(--text-xs); }
+
+.feed-sentinel { height: 1px; }
+
+.me__stats-link { cursor: pointer; }
+
+.me__comments { padding: var(--gap-md); display: flex; flex-direction: column; gap: var(--gap-sm); }
+.me__comment { padding: 12px; cursor: pointer; }
+.me__comment-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.me__comment-top b { font-size: var(--text-sm); }
+.me__comment-rating { color: var(--amber); font-size: var(--text-xs); flex: none; }
+.me__comment-text { margin: 6px 0 0; font-size: var(--text-sm); color: var(--ink-1); line-height: 1.5; }
+.me__comment-time { color: var(--ink-3); font-size: var(--text-xs); }
+.me__more {
+  width: 100%;
+  padding: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
 </style>

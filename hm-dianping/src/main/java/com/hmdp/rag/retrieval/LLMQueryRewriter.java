@@ -1,6 +1,6 @@
 package com.hmdp.rag.retrieval;
 
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -19,7 +19,7 @@ public class LLMQueryRewriter {
 
     private static final Logger log = LoggerFactory.getLogger(LLMQueryRewriter.class);
 
-    private final OpenAiChatModel model;
+    private final ChatModel model;
 
     private static final String SYSTEM_PROMPT = """
             你是RAG检索的查询改写器。用户输入口语化查询，你需要理解意图并生成2~3个改写变体，
@@ -28,7 +28,7 @@ public class LLMQueryRewriter {
             只输出 JSON 数组，不要其他内容：
             ["改写变体1", "改写变体2", "改写变体3"]""";
 
-    public LLMQueryRewriter(OpenAiChatModel model) {
+    public LLMQueryRewriter(ChatModel model) {
         this.model = model;
     }
 

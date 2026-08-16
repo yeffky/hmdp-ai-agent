@@ -29,6 +29,23 @@ const activeType = computed(() => Number(route.query.type) || 0)
 const sentinel = ref(null)
 let observer = null
 
+// 美食细分（activeType===1 时显示第二行 chip，按 /shop/food-categories 计数）
+const foodCats = ref([])
+const activeFc = computed(() => route.query.fc || '')
+async function loadFoodCats() {
+  if (activeType.value !== 1) { foodCats.value = []; return }
+  try {
+    foodCats.value = (await shopApi.foodCategories(loc.current?.districtId)) || []
+  } catch { foodCats.value = [] }
+}
+function selectFc(cat) {
+  const query = { ...route.query, type: 1, name: route.query.name || '美食' }
+  if (cat) query.fc = cat
+  else delete query.fc
+  // 细分切换用 replace：列表页只占一个历史槽，回退直接离开页面，而非逐级退回上次品类
+  router.replace({ path: '/shop-list', query })
+}
+
 const title = computed(() => {
   if (isSearch.value && keyword.value) return `搜索：${keyword.value}`
   return route.query.name || '店铺'
@@ -41,6 +58,7 @@ onMounted(async () => {
     const t = await shopTypeApi.list()
     types.value = t || []
   } catch { /* 分类加载失败忽略 */ }
+  await loadFoodCats()
   await fetchShops(false)
   loaded.value = true
   await fillViewport()
@@ -74,13 +92,21 @@ watch(
     keyword.value = route.query.q || ''
     shops.value = []
     hasMore.value = true
+    await loadFoodCats()
     await fetchShops(false)
     await fillViewport()
   }
 )
 
+// 地区切换后刷新美食细分计数（细分门店数随地区变化）
+watch(
+  () => loc.current?.districtId,
+  () => loadFoodCats()
+)
+
 function switchType(id, name) {
-  router.push({ path: '/shop-list', query: { type: id, name } })
+  // 主分类切换用 replace：避免在列表页累积历史，回退直接离开页面
+  router.replace({ path: '/shop-list', query: { type: id, name } })
 }
 
 // 搜索限定在当前分类内：携带 type + name，另加 q 作为搜索词
@@ -181,6 +207,20 @@ function toDetail(s) {
       >
         <img :src="`/imgs/${t.icon}`" alt="" loading="lazy" />
         {{ t.name }}
+      </button>
+    </nav>
+
+    <!-- 美食细分（仅美食分类显示，按当前地区门店数排序；自动换行不出屏） -->
+    <nav v-if="!isSearch && activeType === 1 && foodCats.length" class="fc-strip">
+      <button class="chip" :class="{ 'is-active': !activeFc }" @click="selectFc('')">全部</button>
+      <button
+        v-for="c in foodCats"
+        :key="c.name"
+        class="chip"
+        :class="{ 'is-active': activeFc === c.name }"
+        @click="selectFc(c.name)"
+      >
+        {{ c.name }}<i v-if="c.cnt" class="chip__cnt">{{ c.cnt }}</i>
       </button>
     </nav>
 
