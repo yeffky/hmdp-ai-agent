@@ -3,6 +3,7 @@ package com.hmdp.task;
 import com.hmdp.mapper.ShopMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -13,6 +14,7 @@ import javax.annotation.Resource;
  * 发评论只累加评论数，评分在这里批量重算，避免每条评论触发全表 AVG 扫描。
  */
 @Component
+@ConditionalOnProperty(name = "xxl.job.enabled", havingValue = "false", matchIfMissing = true)
 public class ShopScoreRecalcScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(ShopScoreRecalcScheduler.class);

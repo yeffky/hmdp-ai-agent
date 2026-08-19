@@ -9,6 +9,19 @@ local userId = ARGV[2]
 
 local stockKey = 'seckill:stock:' .. voucherId
 local orderKey = 'seckill:order:' .. voucherId
+local beginKey = 'seckill:begin:' .. voucherId
+local endKey = 'seckill:end:' .. voucherId
+
+-- 时间元数据存在时由 Redis 原子校验时间窗口；旧数据没有元数据时保持兼容，仍由预热任务补齐。
+local nowMillis = redis.call('time')[1] * 1000
+local beginMillis = tonumber(redis.call('get', beginKey))
+local endMillis = tonumber(redis.call('get', endKey))
+if beginMillis ~= nil and nowMillis < beginMillis then
+    return 3
+end
+if endMillis ~= nil and nowMillis >= endMillis then
+    return 4
+end
 
 -- 判断库存是否充足（key 缺失时视为 0，避免 nil 比较报错）
 local stock = tonumber(redis.call('get', stockKey))

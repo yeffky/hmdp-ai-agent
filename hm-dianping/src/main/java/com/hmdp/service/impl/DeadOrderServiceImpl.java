@@ -6,13 +6,17 @@ import com.hmdp.entity.DeadOrder;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.DeadOrderMapper;
 import com.hmdp.service.IDeadOrderService;
+import com.hmdp.service.IVoucherOrderService;
 import com.hmdp.utils.SeckillCorrelationData;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.connection.CorrelationData.Confirm;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Slf4j
 @Service
@@ -20,6 +24,12 @@ public class DeadOrderServiceImpl extends ServiceImpl<DeadOrderMapper, DeadOrder
 
     @Resource
     private RabbitTemplate rabbitTemplate;
+
+    @Resource
+    private RabbitMQConfig rabbitMQConfig;
+
+    @Resource
+    private IVoucherOrderService voucherOrderService;
 
     @Override
     public void redeliver(Long id) {
@@ -36,17 +46,33 @@ public class DeadOrderServiceImpl extends ServiceImpl<DeadOrderMapper, DeadOrder
         voucherOrder.setUserId(deadOrder.getUserId());
         voucherOrder.setVoucherId(deadOrder.getVoucherId());
 
-        rabbitTemplate.convertAndSend(
-                RabbitMQConfig.SECKILL_ORDER_EXCHANGE,
-                RabbitMQConfig.SECKILL_ORDER_ROUTING_KEY,
-                voucherOrder,
-                msg -> {
-                    // 重置重试预算，重新走完整消费流程
-                    msg.getMessageProperties().setHeader("x-retry-count", 0);
-                    return msg;
-                },
-                // 携带 CorrelationData：重放消息发布失败时同样可回补 Redis 预留
-                new SeckillCorrelationData(voucherOrder));
+        SeckillCorrelationData correlationData = new SeckillCorrelationData(voucherOrder);
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.SECKILL_ORDER_EXCHANGE,
+                    RabbitMQConfig.SECKILL_ORDER_ROUTING_KEY,
+                    voucherOrder,
+                    msg -> {
+                        // 重置重试预算，重新走完整消费流程
+                        msg.getMessageProperties().setHeader("x-retry-count", 0);
+                        return msg;
+                    },
+                    // 携带 CorrelationData：重放消息发布失败时同样可回补 Redis 预留
+                    correlationData);
+        } catch (Exception e) {
+            rabbitMQConfig.rollbackSeckillReservation(voucherOrder, "dead-letter-publish-exception");
+            throw new IllegalStateException("死信订单重放发送失败", e);
+        }
+        try {
+            Confirm confirm = correlationData.getFuture().get(5, TimeUnit.SECONDS);
+            if (!confirm.isAck() || correlationData.getReturned() != null) {
+                throw new IllegalStateException("死信订单重放消息未被 RabbitMQ 接受");
+            }
+        } catch (TimeoutException e) {
+            throw new IllegalStateException("等待死信订单重放确认超时", e);
+        } catch (Exception e) {
+            throw new IllegalStateException("死信订单重放发送失败", e);
+        }
         deadOrder.setStatus(1);
         updateById(deadOrder);
         log.info("死信订单已手动重放: orderId={}, userId={}, voucherId={}",
@@ -58,6 +84,15 @@ public class DeadOrderServiceImpl extends ServiceImpl<DeadOrderMapper, DeadOrder
         DeadOrder deadOrder = getById(id);
         if (deadOrder == null) {
             throw new RuntimeException("死信记录不存在: id=" + id);
+        }
+        VoucherOrder voucherOrder = new VoucherOrder()
+                .setId(deadOrder.getOrderId())
+                .setUserId(deadOrder.getUserId())
+                .setVoucherId(deadOrder.getVoucherId());
+        // 重放和丢弃互斥：只有确认数据库中没有订单时，丢弃才释放 Redis 预留。
+        if (voucherOrderService.getById(deadOrder.getOrderId()) == null
+                && !rabbitMQConfig.rollbackSeckillReservation(voucherOrder, "dead-letter-discard")) {
+            throw new IllegalStateException("死信 Redis 预留回补失败，暂不能丢弃");
         }
         deadOrder.setStatus(2);
         updateById(deadOrder);

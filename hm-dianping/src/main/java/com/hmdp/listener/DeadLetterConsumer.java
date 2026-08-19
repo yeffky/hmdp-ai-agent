@@ -44,6 +44,8 @@ public class DeadLetterConsumer {
         String failReason = extractDeathReason(message);
 
         try {
+            // 保留 Redis 预留：人工重放会绕过 Lua，直接进入消费队列，不能在此处提前回补。
+            // 人工确认丢弃时再执行幂等回补。
             recordPermanent(voucherOrder, message, failReason);
             channel.basicAck(deliveryTag, false);
         } catch (Exception e) {

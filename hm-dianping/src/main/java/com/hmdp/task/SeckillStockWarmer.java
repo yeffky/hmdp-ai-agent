@@ -1,10 +1,7 @@
 package com.hmdp.task;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.entity.SeckillVoucher;
-import com.hmdp.entity.Voucher;
 import com.hmdp.service.ISeckillVoucherService;
-import com.hmdp.service.IVoucherService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -13,27 +10,27 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.Resource;
-import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Date;
+import org.springframework.data.redis.core.ValueOperations;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 
+import static com.hmdp.utils.RedisConstants.SECKILL_BEGIN_KEY;
+import static com.hmdp.utils.RedisConstants.SECKILL_END_KEY;
 import static com.hmdp.utils.RedisConstants.SECKILL_STOCK_KEY;
 
 /**
  * 秒杀库存预热：应用启动时把上架中的秒杀券 MySQL 库存同步到 Redis。
  * 避免应用重启后 `seckill:stock:{id}` 缺失导致 Lua 脚本比较 nil 报错。
  * （xxl-job 的 seckillStockWarmup 任务做周期性兜底，本类做启动兜底）
- * 优化：批量 IN 查秒杀券 + MSET 批量写 Redis，只预热未过期券，避免 N+1 慢启动。
+ * 通过 MySQL JOIN 一次查询未过期秒杀券，避免应用层拼接超长 IN 列表。
  */
 @Component
 public class SeckillStockWarmer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(SeckillStockWarmer.class);
-
-    @Resource
-    private IVoucherService voucherService;
 
     @Resource
     private ISeckillVoucherService seckillVoucherService;
@@ -52,30 +49,64 @@ public class SeckillStockWarmer implements ApplicationRunner {
         t.start();
     }
 
-    /** 预热上架中且未过期的秒杀券库存到 Redis（批量），返回预热数量 */
+    /**
+     * 初始化上架且未过期的秒杀券库存到 Redis。
+     *
+     * 这里只能使用 setIfAbsent，不能用 MySQL 库存覆盖已有 Redis 库存，否则会把
+     * 尚未落库的 Redis 预扣库存重新加回来，造成超卖。
+     */
     public int warmUp() {
-        List<Voucher> seckillVouchers = voucherService.query()
-                .eq("type", 1)
-                .eq("status", 1)
-                .list();
-        if (seckillVouchers.isEmpty()) return 0;
-
-        // 1 次批量查秒杀券（只取未过期），避免逐个 getById 的 N+1
-        List<Long> ids = seckillVouchers.stream().map(Voucher::getId).collect(Collectors.toList());
-        List<SeckillVoucher> activeSvs = seckillVoucherService.list(new QueryWrapper<SeckillVoucher>()
-                .in("voucher_id", ids)
-                .gt("end_time", LocalDateTime.now()));
-
-        // 1 次 MSET 批量写 Redis
-        Map<String, String> stockMap = new HashMap<>();
+        List<SeckillVoucher> activeSvs = seckillVoucherService.listActiveForWarmup();
+        LocalDateTime now = LocalDateTime.now();
+        ValueOperations<String, String> values = stringRedisTemplate.opsForValue();
+        int initialized = 0;
         for (SeckillVoucher sv : activeSvs) {
-            if (sv.getStock() != null) {
-                stockMap.put(SECKILL_STOCK_KEY + sv.getVoucherId(), String.valueOf(sv.getStock()));
+            writeTimeMetadata(values, sv);
+            if (sv.getStock() != null && (sv.getBeginTime() == null || !sv.getBeginTime().isAfter(now))) {
+                Boolean created = values.setIfAbsent(
+                        SECKILL_STOCK_KEY + sv.getVoucherId(), String.valueOf(sv.getStock()));
+                if (Boolean.TRUE.equals(created)) {
+                    initialized++;
+                }
+                expireStockKey(sv);
             }
         }
-        if (!stockMap.isEmpty()) {
-            stringRedisTemplate.opsForValue().multiSet(stockMap);
+        return initialized;
+    }
+
+    /** 清理已过期秒杀券的库存/时间元数据，避免过期 key 长期残留。 */
+    public int clearExpiredKeys() {
+        List<SeckillVoucher> expired = seckillVoucherService.list(new QueryWrapper<SeckillVoucher>()
+                .le("end_time", LocalDateTime.now())
+                .select("voucher_id"));
+        for (SeckillVoucher sv : expired) {
+            stringRedisTemplate.delete(SECKILL_STOCK_KEY + sv.getVoucherId());
+            stringRedisTemplate.delete(SECKILL_BEGIN_KEY + sv.getVoucherId());
+            stringRedisTemplate.delete(SECKILL_END_KEY + sv.getVoucherId());
         }
-        return stockMap.size();
+        return expired.size();
+    }
+
+    private void writeTimeMetadata(ValueOperations<String, String> values, SeckillVoucher sv) {
+        if (sv.getBeginTime() != null) {
+            values.set(SECKILL_BEGIN_KEY + sv.getVoucherId(), String.valueOf(toEpochMillis(sv.getBeginTime())));
+        }
+        if (sv.getEndTime() != null) {
+            values.set(SECKILL_END_KEY + sv.getVoucherId(), String.valueOf(toEpochMillis(sv.getEndTime())));
+            Date expireAt = Date.from(sv.getEndTime().atZone(ZoneId.systemDefault()).toInstant());
+            stringRedisTemplate.expireAt(SECKILL_BEGIN_KEY + sv.getVoucherId(), expireAt);
+            stringRedisTemplate.expireAt(SECKILL_END_KEY + sv.getVoucherId(), expireAt);
+        }
+    }
+
+    private void expireStockKey(SeckillVoucher sv) {
+        if (sv.getEndTime() != null) {
+            Date expireAt = Date.from(sv.getEndTime().atZone(ZoneId.systemDefault()).toInstant());
+            stringRedisTemplate.expireAt(SECKILL_STOCK_KEY + sv.getVoucherId(), expireAt);
+        }
+    }
+
+    private long toEpochMillis(LocalDateTime time) {
+        return time.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
     }
 }

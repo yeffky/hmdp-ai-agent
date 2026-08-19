@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.config.RabbitMQConfig;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
+import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.Voucher;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.VoucherOrderMapper;
@@ -30,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,6 +60,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private RabbitTemplate rabbitTemplate;
 
     @Resource
+    private RabbitMQConfig rabbitMQConfig;
+
+    @Resource
     private RedissonClient redissonClient;
 
     @Lazy
@@ -81,9 +86,16 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         Long result = stringRedisTemplate.execute(SECKILL_SCRIPT,
                 Collections.emptyList(),
                 voucherId.toString(), userId.toString());
+        if (result == null) {
+            return Result.fail("秒杀服务暂不可用");
+        }
         int r = result.intValue();
         if (r != 0) {
-            return Result.fail(r == 1 ? "库存不足" : "不能重复下单");
+            if (r == 1) return Result.fail("库存不足");
+            if (r == 2) return Result.fail("不能重复下单");
+            if (r == 3) return Result.fail("秒杀尚未开始");
+            if (r == 4) return Result.fail("秒杀已结束");
+            return Result.fail("秒杀不可用");
         }
 
         // 2.发送消息到RabbitMQ（携带 CorrelationData：发布确认失败时可凭其回补 Redis 预留）
@@ -92,11 +104,18 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         voucherOrder.setUserId(userId);
         voucherOrder.setVoucherId(voucherId);
 
-        rabbitTemplate.convertAndSend(
-                RabbitMQConfig.SECKILL_ORDER_EXCHANGE,
-                RabbitMQConfig.SECKILL_ORDER_ROUTING_KEY,
-                voucherOrder,
-                new SeckillCorrelationData(voucherOrder));
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.SECKILL_ORDER_EXCHANGE,
+                    RabbitMQConfig.SECKILL_ORDER_ROUTING_KEY,
+                    voucherOrder,
+                    new SeckillCorrelationData(voucherOrder));
+        } catch (Exception e) {
+            // RabbitTemplate 可能在发布前同步抛错，此时不会触发异步 ConfirmCallback。
+            log.error("秒杀订单消息同步发布失败: orderId={}", orderId, e);
+            rabbitMQConfig.rollbackSeckillReservation(voucherOrder, "publish-exception");
+            return Result.fail("秒杀服务暂不可用");
+        }
 
         return Result.ok();
     }
@@ -117,6 +136,20 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Transactional(rollbackFor = Exception.class)
     public void createVoucherOrder(VoucherOrder voucherOrder) {
+        // RabbitMQ ACK 丢失后可能重复投递同一订单，已落库时直接幂等成功，不能再次扣库存。
+        if (getById(voucherOrder.getId()) != null) {
+            return;
+        }
+        Voucher voucher = voucherService.getById(voucherOrder.getVoucherId());
+        SeckillVoucher seckillVoucher = seckillVoucherService.getById(voucherOrder.getVoucherId());
+        LocalDateTime now = LocalDateTime.now();
+        if (voucher == null || !Integer.valueOf(1).equals(voucher.getType())
+                || !Integer.valueOf(1).equals(voucher.getStatus())
+                || seckillVoucher == null
+                || (seckillVoucher.getBeginTime() != null && seckillVoucher.getBeginTime().isAfter(now))
+                || (seckillVoucher.getEndTime() != null && !seckillVoucher.getEndTime().isAfter(now))) {
+            throw new RuntimeException("秒杀券已失效: voucherId=" + voucherOrder.getVoucherId());
+        }
         boolean success = seckillVoucherService.update()
                 .setSql("stock = stock - 1")
                 .eq("voucher_id", voucherOrder.getVoucherId())
@@ -128,6 +161,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
 
         save(voucherOrder);
+        evictVoucherListCache(voucherOrder.getVoucherId());
     }
 
     // ========== 团购下单 / 支付 / 取消 / 订单列表 ==========
@@ -174,7 +208,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         if (!order.getUserId().equals(userId)) return Result.fail("无权操作该订单");
         if (order.getStatus() == null || order.getStatus() != 1) return Result.fail("订单状态不允许取消");
 
-        doCancel(order);
+        if (!doCancel(order)) {
+            return Result.fail("订单状态已变化，无法取消");
+        }
         return Result.ok();
     }
 
@@ -240,6 +276,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         Integer count = query()
                 .eq("user_id", userId)
                 .eq("voucher_id", voucherId)
+                .in("status", Arrays.asList(1, 2, 3))
                 .count();
         return Result.ok(count != null && count > 0);
     }
@@ -260,23 +297,39 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
     }
 
-    private void doCancel(VoucherOrder order) {
-        VoucherOrder upd = new VoucherOrder();
-        upd.setId(order.getId());
-        upd.setStatus(4); // 已取消
-        updateById(upd);
+    private boolean doCancel(VoucherOrder order) {
+        boolean changed = update()
+                .set("status", 4)
+                .eq("id", order.getId())
+                .eq("status", 1)
+                .update();
+        if (!changed) {
+            return false;
+        }
         releaseSeckillStock(order);
+        return true;
     }
 
     /** 秒杀商品取消时回补 MySQL + Redis 库存，并放开一人一单限制 */
     private void releaseSeckillStock(VoucherOrder order) {
         Voucher voucher = voucherService.getById(order.getVoucherId());
         if (voucher == null || voucher.getType() == null || voucher.getType() != 1) return;
-        seckillVoucherService.update()
+        boolean updated = seckillVoucherService.update()
                 .setSql("stock = stock + 1")
                 .eq("voucher_id", order.getVoucherId())
                 .update();
+        if (!updated) {
+            return;
+        }
         stringRedisTemplate.opsForValue().increment(RedisConstants.SECKILL_STOCK_KEY + order.getVoucherId());
         stringRedisTemplate.opsForSet().remove(RedisConstants.SECKILL_ORDER_SET_KEY + order.getVoucherId(), order.getUserId().toString());
+        evictVoucherListCache(order.getVoucherId());
+    }
+
+    private void evictVoucherListCache(Long voucherId) {
+        Voucher voucher = voucherService.getById(voucherId);
+        if (voucher != null && voucher.getShopId() != null) {
+            voucherService.evictVoucherListCache(voucher.getShopId());
+        }
     }
 }

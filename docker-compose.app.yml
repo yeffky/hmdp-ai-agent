@@ -1,0 +1,81 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: hm-dianping/Dockerfile
+    container_name: hmdp-backend
+    env_file:
+      - ./deploy/.env
+    environment:
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/config/application-docker.yaml
+      RAG_DOCUMENT_ENABLED: "false"
+      HMDP_STORAGE_IMAGE_UPLOAD_DIR: /app/uploads
+    volumes:
+      - ./deploy/application-docker.yaml:/config/application-docker.yaml:ro
+      - ./nginx-1.18.0/html/hmdp/imgs:/app/uploads
+      - ./deploy/rag-documents:/app/rag-documents
+      - ./deploy/backend-logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8081"
+      - "9999"
+    ports:
+      - "9999:9999"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_AMAP_JS_KEY: ${VITE_AMAP_JS_KEY:-your-amap-js-key}
+    container_name: hmdp-frontend
+    ports:
+      - "8087:8080"
+    volumes:
+      - ./nginx-1.18.0/html/hmdp/imgs:/usr/share/nginx/html/imgs
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  qdrant:
+    profiles: ["rag"]
+    image: qdrant/qdrant:v1.9.0
+    container_name: hmdp-qdrant
+    volumes:
+      - qdrant_data:/qdrant/storage
+    expose:
+      - "6333"
+      - "6334"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  qdrant_data:

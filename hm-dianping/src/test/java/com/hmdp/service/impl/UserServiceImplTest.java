@@ -117,4 +117,31 @@ class UserServiceImplTest {
         assertTrue(r.getSuccess());
         assertEquals(0, r.getData());
     }
+
+    @Test
+    void sendCode_setsCooldownBeforeWritingCode() {
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> vo = mock(ValueOperations.class);
+        when(stringRedisTemplate.opsForValue()).thenReturn(vo);
+        when(vo.setIfAbsent(anyString(), anyString(), anyLong(), any())).thenReturn(true);
+
+        Result result = userService.sendCode("13800138000", null);
+
+        assertTrue(result.getSuccess());
+        verify(vo).setIfAbsent(contains("login:code:cooldown:"), eq("1"), eq(60L), any());
+        verify(vo).set(contains("login:code:"), anyString(), eq(2L), any());
+    }
+
+    @Test
+    void sendCode_rejectsWhenCooldownExists() {
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> vo = mock(ValueOperations.class);
+        when(stringRedisTemplate.opsForValue()).thenReturn(vo);
+        when(vo.setIfAbsent(anyString(), anyString(), anyLong(), any())).thenReturn(false);
+
+        Result result = userService.sendCode("13800138000", null);
+
+        assertFalse(result.getSuccess());
+        verify(vo, never()).set(contains("login:code:"), anyString(), anyLong(), any());
+    }
 }

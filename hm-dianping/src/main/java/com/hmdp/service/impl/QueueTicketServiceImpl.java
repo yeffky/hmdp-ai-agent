@@ -66,14 +66,8 @@ public class QueueTicketServiceImpl extends ServiceImpl<QueueTicketMapper, Queue
 
         // 1. 检查是否已有活跃排队（防止同用户跨店重复取号）
         String existingTicketId = stringRedisTemplate.opsForValue().get(userKey);
-        if (existingTicketId != null && stringRedisTemplate.hasKey(RedisConstants.QUEUE_TICKET_KEY + existingTicketId)) {
-            Object existingShopId = stringRedisTemplate.opsForHash()
-                    .get(RedisConstants.QUEUE_TICKET_KEY + existingTicketId, "shopId");
-            if (existingShopId != null && existingShopId.toString().equals(shopId.toString())) {
-                Object qn = stringRedisTemplate.opsForHash()
-                        .get(RedisConstants.QUEUE_TICKET_KEY + existingTicketId, "queueNumber");
-                throw new RuntimeException("您已在该商铺排队中，当前排队号 " + qn + "，请勿重复取号");
-            }
+        if (existingTicketId != null && Boolean.TRUE.equals(stringRedisTemplate.hasKey(RedisConstants.QUEUE_TICKET_KEY + existingTicketId))) {
+            throw new RuntimeException("您已有排队中的记录，请先取消或完成当前排队再取号");
         }
 
         // 2. INCR 原子生成排队号

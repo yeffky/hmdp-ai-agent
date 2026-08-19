@@ -1,0 +1,144 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: hmdp
+  datasource:
+    driver-class-name: com.mysql.jdbc.Driver
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT:3306}/${DB_NAME:hmdp}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:8}
+      minimum-idle: 1
+      idle-timeout: 300000
+      max-lifetime: 600000
+      connection-timeout: 10000
+      validation-timeout: 5000
+      connection-test-query: SELECT 1
+  redis:
+    host: ${REDIS_HOST}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD}
+    timeout: 8s
+    client-type: jedis
+    jedis:
+      pool:
+        max-active: 16
+        max-idle: 4
+        min-idle: 1
+        time-between-eviction-runs: 10s
+  rabbitmq:
+    host: ${RABBITMQ_HOST}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:hmdp}
+    password: ${RABBITMQ_PASSWORD}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: manual
+        prefetch: 1
+        concurrency: ${RABBITMQ_CONCURRENCY:3}
+  jackson:
+    default-property-inclusion: non_null
+
+mybatis-plus:
+  type-aliases-package: com.hmdp.entity
+
+logging:
+  level:
+    com.hmdp: ${LOG_LEVEL:INFO}
+  pattern:
+    level: "%5p [%X{traceId}]"
+
+deepseek:
+  api-key: ${DEEPSEEK_API_KEY}
+  base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+  streaming-base-url: ${DEEPSEEK_STREAMING_BASE_URL:https://api.deepseek.com}
+  model: ${DEEPSEEK_MODEL:deepseek-chat}
+  temperature: ${DEEPSEEK_TEMPERATURE:0.7}
+  max-tokens: ${DEEPSEEK_MAX_TOKENS:2000}
+  timeout-seconds: ${DEEPSEEK_TIMEOUT_SECONDS:60}
+
+rag:
+  qdrant:
+    host: ${QDRANT_HOST:http://qdrant}
+    port: ${QDRANT_PORT:6333}
+    collection: ${QDRANT_COLLECTION:hmdp_knowledge}
+    vector-size: ${QDRANT_VECTOR_SIZE:1024}
+    distance: ${QDRANT_DISTANCE:Cosine}
+  embedding:
+    base-url: ${EMBEDDING_BASE_URL:http://host.docker.internal:11434/v1}
+    api-key: ${EMBEDDING_API_KEY:ollama}
+    model: ${EMBEDDING_MODEL:bge-m3}
+  retrieval:
+    top-k: 5
+    score-threshold: 0.3
+  splitter:
+    chunk-size: 500
+    chunk-overlap: 50
+  document:
+    enabled: ${RAG_DOCUMENT_ENABLED:false}
+    watch-dir: /app/rag-documents
+    state-file: /app/rag-doc-state.json
+    debounce-seconds: 5
+    full-scan-interval-seconds: 300
+    watch-file-extensions: pdf,docx,doc,pptx,ppt,xlsx,xls,html,htm,csv,json,xml,epub,md,txt
+    markitdown-command: ${MARKITDOWN_COMMAND:python -m markitdown}
+    timeout-seconds: 300
+
+agent:
+  graph:
+    max-iterations: 8
+    max-retries: 3
+    llm-error-classify: true
+  postgres:
+    url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT:5432}/${POSTGRES_DB:hmdp}
+    username: ${POSTGRES_USERNAME:postgres}
+    password: ${POSTGRES_PASSWORD}
+  memory:
+    compression:
+      enabled: true
+      compress-threshold: 4000
+      keep-recent-tokens: 2000
+      keep-recent-rounds: 5
+      max-summary-tokens: 500
+      max-uncompressed-messages: 50
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+xxl:
+  job:
+    enabled: ${XXL_JOB_ENABLED:false}
+    admin:
+      addresses: ${XXL_JOB_ADMIN_URL:http://127.0.0.1:8080/xxl-job-admin}
+    accessToken: ${XXL_JOB_ACCESS_TOKEN:default_token}
+    executor:
+      appname: ${XXL_JOB_APPNAME:hmdp-executor}
+      address: ${XXL_JOB_EXECUTOR_ADDRESS:}
+      ip: ${XXL_JOB_EXECUTOR_IP:}
+      port: ${XXL_JOB_EXECUTOR_PORT:9999}
+      logpath: /app/logs/xxl-job
+      logretentiondays: 30
+
+hmdp:
+  storage:
+    image-upload-dir: /app/uploads
+  jwt:
+    secret: ${JWT_SECRET}
+    access-ttl-minutes: ${JWT_ACCESS_TTL_MINUTES:30}
+    refresh-ttl-days: ${JWT_REFRESH_TTL_DAYS:7}
+  id-obfuscator:
+    salt: ${ID_OBFUSCATOR_SALT}

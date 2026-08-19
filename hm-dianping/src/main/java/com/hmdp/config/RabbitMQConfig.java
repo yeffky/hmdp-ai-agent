@@ -17,6 +17,7 @@ import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import javax.annotation.Resource;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +28,17 @@ import java.util.Map;
 public class RabbitMQConfig {
 
     private static final Logger log = LoggerFactory.getLogger(RabbitMQConfig.class);
+
+    /** 仅在一人一单集合移除成功时回补库存，保证发布失败/DLQ 重复补偿幂等。 */
+    public static final DefaultRedisScript<Long> RELEASE_SECKILL_RESERVATION_SCRIPT;
+
+    static {
+        RELEASE_SECKILL_RESERVATION_SCRIPT = new DefaultRedisScript<>();
+        RELEASE_SECKILL_RESERVATION_SCRIPT.setScriptText(
+                "if redis.call('srem', KEYS[2], ARGV[1]) == 1 then " +
+                        "redis.call('incrby', KEYS[1], 1); return 1; end; return 0;");
+        RELEASE_SECKILL_RESERVATION_SCRIPT.setResultType(Long.class);
+    }
 
     public static final String SECKILL_ORDER_QUEUE = "seckill.order.queue";
     public static final String SECKILL_ORDER_EXCHANGE = "seckill.order.exchange";
@@ -137,22 +149,25 @@ public class RabbitMQConfig {
      * 发布失败回补：Lua 阶段已扣 Redis 库存并记录一人一单，但消息未到达 Broker / 无法路由，
      * 订单永远不会落库，必须把 Redis 的预扣状态回滚，否则用户无法再买、库存被"吞"。
      */
-    private void rollbackSeckillReservation(VoucherOrder order, String reason) {
+    public boolean rollbackSeckillReservation(VoucherOrder order, String reason) {
         if (order == null) {
             // 非秒杀消息（或未携带关联数据），无回补上下文，仅记日志
             log.warn("发布失败但无秒杀上下文可回补, reason={}", reason);
-            return;
+            return false;
         }
         try {
-            stringRedisTemplate.opsForValue().increment(
-                    RedisConstants.SECKILL_STOCK_KEY + order.getVoucherId());
-            stringRedisTemplate.opsForSet().remove(
-                    RedisConstants.SECKILL_ORDER_SET_KEY + order.getVoucherId(),
+            Long released = stringRedisTemplate.execute(
+                    RELEASE_SECKILL_RESERVATION_SCRIPT,
+                    java.util.Arrays.asList(
+                            RedisConstants.SECKILL_STOCK_KEY + order.getVoucherId(),
+                            RedisConstants.SECKILL_ORDER_SET_KEY + order.getVoucherId()),
                     order.getUserId().toString());
             log.error("已回补秒杀Redis预留: orderId={}, userId={}, voucherId={}, reason={}",
                     order.getId(), order.getUserId(), order.getVoucherId(), reason);
+            return released != null;
         } catch (Exception e) {
             log.error("回补秒杀Redis预留失败: orderId={}", order.getId(), e);
+            return false;
         }
     }
 }

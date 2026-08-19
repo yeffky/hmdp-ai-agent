@@ -25,6 +25,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 import java.util.Collections;
+import java.util.Collection;
 import java.util.Map;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -118,6 +119,17 @@ class VoucherOrderServiceImplTest {
         assertEquals(TEST_USER_ID, cap.getValue().getUserId());
     }
 
+    @Test
+    void createVoucherOrder_duplicateMessage_doesNotDecrementAgain() {
+        VoucherOrder existing = pendingOrder();
+        doReturn(existing).when(voucherOrderService).getById(TEST_ORDER_ID);
+
+        voucherOrderService.createVoucherOrder(existing);
+
+        verifyNoInteractions(seckillVoucherService);
+        verify(voucherOrderMapper, never()).insert(any());
+    }
+
     // ---------- 支付 ----------
 
     @Test
@@ -150,6 +162,7 @@ class VoucherOrderServiceImplTest {
     void cancelOrder_pendingSeckill_releasesStock() {
         stubOrder(pendingOrder());
         when(voucherService.getById(TEST_VOUCHER_ID)).thenReturn(voucher(1, 1));
+        stubUpdate(true);
 
         @SuppressWarnings("unchecked")
         UpdateChainWrapper<SeckillVoucher> chain = mock(UpdateChainWrapper.class);
@@ -168,9 +181,6 @@ class VoucherOrderServiceImplTest {
         var result = voucherOrderService.cancelOrder(TEST_ORDER_ID);
         assertTrue(result.getSuccess());
 
-        ArgumentCaptor<VoucherOrder> cap = ArgumentCaptor.forClass(VoucherOrder.class);
-        verify(voucherOrderMapper).updateById(cap.capture());
-        assertEquals(4, cap.getValue().getStatus());
         verify(vo).increment("seckill:stock:" + TEST_VOUCHER_ID);
         verify(so).remove("seckill:order:" + TEST_VOUCHER_ID, TEST_USER_ID.toString());
     }
@@ -179,9 +189,24 @@ class VoucherOrderServiceImplTest {
     void cancelOrder_pendingNormal_noStockRelease() {
         stubOrder(pendingOrder());
         when(voucherService.getById(TEST_VOUCHER_ID)).thenReturn(voucher(0, 1));
+        stubUpdate(true);
 
         var result = voucherOrderService.cancelOrder(TEST_ORDER_ID);
         assertTrue(result.getSuccess());
+        verify(stringRedisTemplate, never()).opsForValue();
+        verify(stringRedisTemplate, never()).opsForSet();
+    }
+
+    @Test
+    void cancelOrder_statusChangedConcurrently_doesNotReleaseStock() {
+        stubOrder(pendingOrder());
+        when(voucherService.getById(TEST_VOUCHER_ID)).thenReturn(voucher(1, 1));
+        stubUpdate(false);
+
+        var result = voucherOrderService.cancelOrder(TEST_ORDER_ID);
+
+        assertFalse(result.getSuccess());
+        verify(seckillVoucherService, never()).update();
         verify(stringRedisTemplate, never()).opsForValue();
         verify(stringRedisTemplate, never()).opsForSet();
     }
@@ -192,6 +217,7 @@ class VoucherOrderServiceImplTest {
         com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper<VoucherOrder> chain =
                 mock(com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper.class);
         when(chain.eq(anyString(), any())).thenReturn(chain);
+        when(chain.in(anyString(), any(Collection.class))).thenReturn(chain);
         when(chain.count()).thenReturn(1);
         doReturn(chain).when(voucherOrderService).query();
 
@@ -206,6 +232,7 @@ class VoucherOrderServiceImplTest {
         com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper<VoucherOrder> chain =
                 mock(com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper.class);
         when(chain.eq(anyString(), any())).thenReturn(chain);
+        when(chain.in(anyString(), any(Collection.class))).thenReturn(chain);
         when(chain.count()).thenReturn(0);
         doReturn(chain).when(voucherOrderService).query();
 

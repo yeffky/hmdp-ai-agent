@@ -27,6 +27,9 @@ public class DocumentFileWatcher {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentFileWatcher.class);
 
+    @Value("${xxl.job.enabled:false}")
+    private boolean xxlJobEnabled;
+
     private final DocumentPipeline pipeline;
     private final Path watchDir;
     private final int debounceSeconds;
@@ -141,6 +144,13 @@ public class DocumentFileWatcher {
 
     /** 定时全量扫描：处理应用离线期间的变更 */
     @Scheduled(fixedDelayString = "${rag.document.full-scan-interval-seconds:300}000")
+    public void scheduledFullScan() {
+        if (xxlJobEnabled) {
+            return;
+        }
+        fullScan();
+    }
+
     public void fullScan() {
         log.debug("定时全量扫描: {}", watchDir);
         pipeline.processAll(watchDir);

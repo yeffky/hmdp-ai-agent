@@ -176,7 +176,7 @@ public class KnowledgeBaseController {
                          @RequestParam(value = "topK", defaultValue = "5") int topK) {
         if (q == null || q.trim().isEmpty()) return Result.fail("查询不能为空");
         try {
-            List<SearchResult> results = retrievalService.search(q);
+            List<SearchResult> results = retrievalService.search(q, topK);
             List<Map<String, Object>> list = results.stream().map(r -> {
                 Map<String, Object> m = new java.util.LinkedHashMap<>();
                 m.put("text", r.getChunk().getText());

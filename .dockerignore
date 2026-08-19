@@ -1,0 +1,16 @@
+.git
+.gitignore
+.idea
+.claude
+.agents
+**/target
+**/node_modules
+**/.env
+**/application.yaml
+frontend/dist
+nginx-1.18.0/logs
+nginx-1.18.0/temp
+tools/crawl-amap/dist
+tools/ssh
+*.iml
+*.log

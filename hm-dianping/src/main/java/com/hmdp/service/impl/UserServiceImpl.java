@@ -70,9 +70,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String code = RandomUtil.randomNumbers(6);
 
         // 4.保存验证码到redis
+        Boolean allowed = stringRedisTemplate.opsForValue().setIfAbsent(
+                LOGIN_CODE_COOLDOWN_KEY + phone, "1", LOGIN_CODE_RESEND_INTERVAL, TimeUnit.SECONDS);
+        if (!Boolean.TRUE.equals(allowed)) {
+            return Result.fail("验证码发送过于频繁，请稍后再试");
+        }
         stringRedisTemplate.opsForValue().set(LOGIN_CODE_KEY + phone, code, LOGIN_CODE_TTL, TimeUnit.MINUTES);
         // 5.发送验证码
-        log.debug("发送短信验证码成功，验证码：{}", code);
+        log.info("验证码已生成，phone={}, code={}", maskPhone(phone), code);
 
         return Result.ok();
     }
@@ -94,6 +99,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         }
 
         // 4.一致，根据手机号查询用户
+        stringRedisTemplate.delete(LOGIN_CODE_KEY + phone);
         User user = query().eq("phone", loginForm.getPhone()).one();
 
         // 5.判断用户是否存在
@@ -239,5 +245,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 2.保存用户
         save(user);
         return user;
+    }
+
+    private String maskPhone(String phone) {
+        return phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4);
     }
 }

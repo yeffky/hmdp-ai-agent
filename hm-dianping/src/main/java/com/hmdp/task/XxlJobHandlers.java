@@ -5,12 +5,15 @@ import com.hmdp.mapper.ShopMapper;
 import com.hmdp.rag.document.DocumentFileWatcher;
 import com.hmdp.service.IVoucherOrderService;
 import com.hmdp.service.IVoucherService;
+import com.hmdp.entity.Voucher;
 import com.xxl.job.core.handler.annotation.XxlJob;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.Resource;
+import java.util.List;
 
 /**
  * xxl-job 定时任务统一入口（由调度中心按 cron 触发）。
@@ -37,7 +40,7 @@ public class XxlJobHandlers {
     @Resource
     private Text2SqlTool text2SqlTool;
 
-    @Resource
+    @Autowired(required = false)
     private DocumentFileWatcher documentFileWatcher;
 
     /** 店铺评分延迟重算（每 10 分钟） */
@@ -64,24 +67,35 @@ public class XxlJobHandlers {
     /** 秒杀券到期自动下架（end_time 已过 → status=3 过期） */
     @XxlJob("seckillVoucherExpire")
     public void seckillVoucherExpire() {
+        List<Voucher> expiring = voucherService.query()
+                .eq("type", 1)
+                .eq("status", 1)
+                .apply("id IN (SELECT voucher_id FROM tb_seckill_voucher WHERE end_time < NOW())")
+                .list();
         boolean ok = voucherService.update()
                 .set("status", 3)
                 .eq("type", 1)
                 .eq("status", 1)
                 .apply("id IN (SELECT voucher_id FROM tb_seckill_voucher WHERE end_time < NOW())")
                 .update();
-        log.info("[xxl-job] 秒杀券到期下架执行{}", ok ? "成功" : "完成");
+        expiring.forEach(v -> voucherService.evictVoucherListCache(v.getShopId()));
+        int cleared = seckillStockWarmer.clearExpiredKeys();
+        log.info("[xxl-job] 秒杀券到期下架执行{}，清理 Redis key {} 个", ok ? "成功" : "完成", cleared);
     }
 
     /** Text2SQL 表名缓存刷新（每 2 小时） */
     @XxlJob("tableCacheRefresh")
     public void tableCacheRefresh() {
-        text2SqlTool.scheduledEvictTableCache();
+        text2SqlTool.evictTableCache();
     }
 
     /** RAG 文档全量扫描（处理离线期间变更） */
     @XxlJob("ragDocFullScan")
     public void ragDocFullScan() {
+        if (documentFileWatcher == null) {
+            log.info("[xxl-job] RAG 文档监听未启用，跳过全量扫描");
+            return;
+        }
         documentFileWatcher.fullScan();
     }
 }

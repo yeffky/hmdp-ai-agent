@@ -18,24 +18,10 @@ public class MvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        // 登录拦截器
         registry.addInterceptor(new LoginInterceptor())
-                .excludePathPatterns("/user/code",
-                        "/user/login",
-                        "/user/refresh",   // 续约在 access 过期时调用，只靠 refreshToken（cookie），不能要求已登录
-                        "/user/logout",
-                        "/blog/hot",
-                        "/shop-type/**",
-                        "/shop/**",
-                        "/upload/**",
-                        "/voucher/**",
-                        "/kb/**",
-                        "/debug/**",
-                        "/qdrant-admin.html",
-                        "/api/qdrant/admin/**"
-                        ).order(1);
-        // accessToken 拦截器（无状态 JWT 验签）
-        registry.addInterceptor(new RefreshTokenInterceptor(jwtUtil)).addPathPatterns("/**").order(0);
+                .excludePathPatterns("/user/code", "/user/login", "/user/refresh", "/user/logout", "/blog/hot")
+                .order(1);
 
+        registry.addInterceptor(new RefreshTokenInterceptor(jwtUtil)).addPathPatterns("/**").order(0);
     }
 }

@@ -3,6 +3,7 @@ package com.hmdp.listener;
 import com.hmdp.config.RabbitMQConfig;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.service.impl.VoucherOrderServiceImpl;
+import com.hmdp.utils.SeckillCorrelationData;
 import com.rabbitmq.client.Channel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
@@ -66,7 +67,8 @@ public class VoucherOrderConsumer {
                     msg -> {
                         msg.getMessageProperties().setHeader("x-retry-count", nextRetry);
                         return msg;
-                    });
+                    },
+                    new SeckillCorrelationData(voucherOrder));
             ackAndLog(channel, deliveryTag, voucherOrder.getId());
         } else {
             log.error("秒杀订单消费失败，已重试{}次，转入DLQ: orderId={}",

@@ -2,6 +2,8 @@
 
 基于 Spring Boot + LangGraph4j + LangChain4j + DeepSeek 的 ReAct 模式 AI Agent，集成 RAG 混合检索、Text2SQL 动态查询、增量 Checkpoint 存储、SSE 流式输出与排队取号等功能。
 
+> 当前部署方式：后端与前端通过 `docker-compose.app.yml` 启动，服务器配置使用 `deploy/.env` 注入；生产服务器默认关闭 RAG，不启动 Ollama/Qdrant。Docker 部署前端入口为 `8087`，本地传统 Nginx 开发入口仍为 `8080`。
+
 ## 技术栈
 
 | 组件 | 技术 |
@@ -21,6 +23,7 @@
 | 地图 | 高德 JS API（前端地图渲染）+ 高德 Web API（真实商家数据爬取，GCJ-02） |
 | AI 图像生成 | ComfyUI + Realistic Vision V5.1（服务器 RTX 4090 批量生成评价图/团购封面） |
 | 任务调度 | xxl-job 2.4.1（半接入；本地由 `@Scheduled` 兜底） |
+| 部署 | Docker Compose + Nginx；生产配置通过服务器 `deploy/.env` 注入 |
 
 ## ReAct Agent 架构
 
@@ -140,7 +143,7 @@ Consumer 异步消费 → Redisson 分布式锁 → 写库落单
 
 ### xxl-job 分布式任务调度（半接入）
 
-- 调度中心已部署；执行器由 `xxl.job.enabled` 开关控制（本地默认关，`@Scheduled` 兜底；部署到服务器后开启）
+- 调度中心已部署；执行器由 `xxl.job.enabled` 开关控制（本地和当前 Docker 部署默认关闭，`@Scheduled` 兜底，按需开启）
 - 任务：店铺评分重算 / 订单超时取消 / 秒杀库存预热（启动异步预热 + Lua nil 兜底）/ 秒杀券到期下架 / Text2SQL 缓存刷新 / RAG 文档扫描
 
 ## 项目结构
@@ -200,11 +203,15 @@ frontend/
 - 开发：`cd frontend && npm run dev`（`http://localhost:5173`，Vite 代理转发到 8081）
 - 构建：`npm run build` → 产物自动输出到 `nginx-1.18.0/html/hmdp-app`
 - 测试：`npm test`（Vitest，覆盖格式化 / SSE 解析 / 聊天状态机 / HTTP 拦截器 / chat store）
+- Docker 生产构建：使用根目录 `docker-compose.app.yml`，前端容器对外发布 `8087`，后端仅在 Compose 网络中暴露 `8081`
 
 ## API
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| POST | `/user/code` | 生成登录验证码（开发/测试环境查看后端日志） |
+| POST | `/user/login` | 手机号 + 验证码登录 |
+| POST | `/user/refresh` | 使用 HttpOnly refreshToken 刷新登录令牌 |
 | POST | `/chat/react/stream` | ReAct Agent SSE 流式对话 |
 | GET | `/chat/history` | 对话历史（游标分页） |
 | POST | `/kb/ingest` | 文档摄取 |
@@ -231,6 +238,8 @@ frontend/
 | PUT | `/user/info` | 更新个人资料 |
 | GET | `/user/sign/today` | 今天是否已签到（置灰按钮） |
 
+除登录、刷新令牌和部分公开读接口外，业务接口需要携带登录令牌。当前管理/知识库页面也只要求用户登录，尚未区分管理员角色。
+
 ## 快速开始
 
 ### 1. 环境要求
@@ -243,9 +252,32 @@ frontend/
 | PostgreSQL | 14+ | Agent checkpoint 持久化 + 聊天历史、用户画像 |
 | Redis | 6+ | 缓存 / 分布式锁 / Token 存储 / GeoSearch |
 | RabbitMQ | 3.12+ | 秒杀订单异步消息队列 |
-| Docker | 20+ | Qdrant 向量数据库 |
-| Ollama | 最新 | Embedding 模型（可选，也可用 SiliconFlow 云端 API） |
+| Docker | 20+ / Compose v2 | 本地依赖或生产应用容器 |
+| Ollama | 最新（本地可选） | Embedding 模型；生产服务器因资源/运行时限制默认不启用 |
 | Nginx | 1.18+ | 前端静态文件 + API 反向代理 |
+
+### Docker 服务器部署（推荐）
+
+生产环境不要把本地 `application.yaml` 上传到服务器。将配置写入服务器上的 `deploy/.env`，并限制权限：
+
+```bash
+cp deploy/.env.example deploy/.env
+chmod 600 deploy/.env
+```
+
+在项目根目录执行：
+
+```bash
+docker compose -f docker-compose.app.yml --env-file deploy/.env config --quiet
+docker compose -f docker-compose.app.yml --env-file deploy/.env build backend frontend
+docker compose -f docker-compose.app.yml --env-file deploy/.env up -d backend frontend
+docker compose -f docker-compose.app.yml --env-file deploy/.env ps
+docker compose -f docker-compose.app.yml --env-file deploy/.env logs -f --tail=200 backend
+```
+
+访问地址：`http://<server-host>:8087/`。后端 `8081` 仅在 Compose 网络中可访问，前端 Nginx 负责 `/api/`、`/chat/`、`/kb/` 等路径的反向代理。当前生产配置默认 `RAG_DOCUMENT_ENABLED=false`，不会启动 Ollama；资源充足并准备好兼容的 Embedding 服务后，才通过 `--profile rag` 单独启动 Qdrant。
+
+服务器应用配置模板见 `deploy/application-docker.yaml`，环境变量模板见 `deploy/.env.example`，完整部署说明见 `deploy/README.md`。
 
 ### 2. 数据库初始化
 
@@ -345,7 +377,9 @@ rag:
     model: bge-m3
 ```
 
-### 5. Nginx 配置
+### 5. 传统本地 Nginx 配置
+
+本节适用于不使用 Docker 的本地/传统部署。Docker 部署请使用 `deploy/nginx.docker.conf`，并通过 `docker-compose.app.yml` 将服务器 `8087` 映射到容器内 Nginx 的 `8080`。
 
 **先构建前端**（Vue 3 产物会输出到 `nginx-1.18.0/html/hmdp-app`）：
 
@@ -420,7 +454,8 @@ Declaring exchange 'seckill.order.exchange', queue 'seckill.order.queue'...
 
 | 步骤 | 操作 | 预期 |
 |------|------|------|
-| 前端访问 | 打开 `http://localhost:8080` | 显示首页（号票风格） |
+| 本地传统部署前端访问 | 打开 `http://localhost:8080` | 显示首页（号票风格） |
+| Docker 服务器前端访问 | 打开 `http://<server-host>:8087` | 显示首页（号票风格） |
 | 登录 | 手机号 + 验证码登录 | 获取 Token |
 | Agent 对话 | 右下角「小优」聊天气泡输入"你好" | ReAct Agent 规划→执行→回答 |
 | RAG 检索 | 打开 `/admin/kb` → 导入示例问答 → 问"怎么退款" | 从知识库检索并回答 |
@@ -430,7 +465,7 @@ Declaring exchange 'seckill.order.exchange', queue 'seckill.order.queue'...
 
 ### 8. 初始化知识库
 
-打开 `http://localhost:8080/admin/kb`：
+本地传统部署打开 `http://localhost:8080/admin/kb`；Docker 服务器部署打开 `http://<server-host>:8087/admin/kb`。但生产环境默认关闭 RAG，未配置可用的 Qdrant/Embedding 服务时，知识库检索不会正常执行。
 
 1. 点击"导入示例问答"加载种子数据
 2. 或上传文档（PDF/Word/Markdown 等），由 DocumentPipeline 自动切片 + 向量化
@@ -454,6 +489,8 @@ curl -X POST http://localhost:8081/kb/ingest \
 | 秒杀消息堆积/DLQ 有消息 | 查看 Consumer 日志确认失败原因；DLQ 队列 `seckill.order.dlq` 手动消费后排查 |
 | Embedding 失败 | Ollama 是否启动？`ollama list` 确认 `bge-m3` 已下载 |
 | SSE 流式不工作 | Nginx `proxy_buffering off` 是否配置？浏览器 Network 面板查看 EventStream |
+| Docker 后端日志 | 执行 `docker compose -f docker-compose.app.yml --env-file deploy/.env logs -f --tail=200 backend` |
+| Docker 前端无法访问 | 确认访问的是 `http://<server-host>:8087`，而不是 HTTPS 或 `8080` |
 
 ## License
 

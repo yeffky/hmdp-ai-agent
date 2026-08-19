@@ -1,25 +1,31 @@
 package com.hmdp.utils;
 
-import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
-import com.hmdp.entity.Shop;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
-import static com.hmdp.utils.RedisConstants.*;
+import static com.hmdp.utils.RedisConstants.CACHE_NULL_TTL;
+import static com.hmdp.utils.RedisConstants.LOCK_SHOP_KEY;
 
-@Slf4j
 @Component
 public class CacheClient {
+
+    private static final DefaultRedisScript<Long> UNLOCK_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                    + "return redis.call('del', KEYS[1]) else return 0 end", Long.class);
 
     private final StringRedisTemplate stringRedisTemplate;
 
@@ -38,99 +44,91 @@ public class CacheClient {
         stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(redisData));
     }
 
-    public <R, ID> R queryWithPassThrough(String keyPrefix, ID id, Class<R> type,
-                                          Function<ID, R> dbFallback, Long time, TimeUnit timeUnit) {
-        String key = keyPrefix + id;
+    /** Cache-Aside list cache with an empty-list sentinel to avoid cache penetration. */
+    public <R> List<R> queryListWithPassThrough(String key, Class<R> type,
+                                                Supplier<List<R>> dbFallback,
+                                                Long time, TimeUnit timeUnit) {
         String json = stringRedisTemplate.opsForValue().get(key);
         if (StrUtil.isNotBlank(json)) {
-            return JSONUtil.toBean(json, type);
+            return JSONUtil.toList(json, type);
         }
-
-        // 判断命中是否为空值
         if (json != null) {
-            // 返回错误信息
-            return null;
+            return Collections.emptyList();
         }
-
-        R r = dbFallback.apply(id);
-
-        if (r == null) {
-            // 将空值写入redis
-            stringRedisTemplate.opsForValue().set(key, "", CACHE_NULL_TTL, TimeUnit.MINUTES);
-            return null;
+        List<R> list = dbFallback.get();
+        if (list == null || list.isEmpty()) {
+            stringRedisTemplate.opsForValue().set(key, "[]", CACHE_NULL_TTL, TimeUnit.MINUTES);
+            return Collections.emptyList();
         }
-        // 超时剔除
-        this.set(key, r, time, timeUnit);
-        return r;
+        set(key, list, time, timeUnit);
+        return list;
     }
 
-    public <R, ID> R queryWithLogicalExpire(String keyPrefix, ID id, Class<R> type, Function<ID, R> dbFallback, Long time, TimeUnit timeUnit) {
+    public <R, ID> R queryWithLogicalExpire(String keyPrefix, ID id, Class<R> type,
+                                             Function<ID, R> dbFallback, Long time, TimeUnit timeUnit) {
         String key = keyPrefix + id;
         String json = stringRedisTemplate.opsForValue().get(key);
-
-        // 缓存未命中 — 从数据库加载并写入缓存
         if (StrUtil.isBlank(json)) {
             R r = dbFallback.apply(id);
             if (r != null) {
-                this.setWithLogicalExpire(key, r, time, timeUnit);
+                setWithLogicalExpire(key, r, time, timeUnit);
             }
             return r;
         }
-        // 命中，需要先把json反序列化为对象
+
         RedisData redisData = JSONUtil.toBean(json, RedisData.class);
         JSONObject data = (JSONObject) redisData.getData();
         R r = JSONUtil.toBean(data, type);
-        LocalDateTime expireTime = redisData.getExpireTime();
-        // 判断是否过期
-        if (expireTime.isAfter(LocalDateTime.now())) {
-            // 未过期，直接返回店铺信息
+        if (redisData.getExpireTime().isAfter(LocalDateTime.now())) {
             return r;
         }
-        // 已过期，缓存重建
-        // 获取互斥锁
+
         String lockKey = LOCK_SHOP_KEY + id;
-        boolean isLock = tryLock(lockKey);
-        // 判断是否获取成功
-        if (isLock) {
-            // 二次校验
+        String lockToken = tryLock(lockKey);
+        if (lockToken == null) {
+            return r;
+        }
+
+        boolean rebuildSubmitted = false;
+        try {
             json = stringRedisTemplate.opsForValue().get(key);
             if (StrUtil.isBlank(json)) {
                 return null;
             }
-            // 命中，需要先把json反序列化为对象
             redisData = JSONUtil.toBean(json, RedisData.class);
             data = (JSONObject) redisData.getData();
             r = JSONUtil.toBean(data, type);
-            expireTime = redisData.getExpireTime();
-            // 判断是否过期
-            if (expireTime.isAfter(LocalDateTime.now())) {
-                // 未过期，直接返回店铺信息
+            if (redisData.getExpireTime().isAfter(LocalDateTime.now())) {
                 return r;
             }
-            // 成功，开启独立线程重建
+
             CACHE_REBUILD_EXECUTOR.submit(() -> {
                 try {
-                    R r1 = dbFallback.apply(id);
-                    this.setWithLogicalExpire(key, r1, time, timeUnit);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
+                    R fresh = dbFallback.apply(id);
+                    if (fresh != null) {
+                        setWithLogicalExpire(key, fresh, time, timeUnit);
+                    }
                 } finally {
-                    // 释放锁
-                    unlock(lockKey);
+                    unlock(lockKey, lockToken);
                 }
             });
+            rebuildSubmitted = true;
+            return r;
+        } finally {
+            if (!rebuildSubmitted) {
+                unlock(lockKey, lockToken);
+            }
         }
-        // 失败，返回商铺信息
-        return r;
     }
 
-    private boolean tryLock(String key) {
-        Boolean flag = stringRedisTemplate.opsForValue().setIfAbsent(key, "1", 10, TimeUnit.SECONDS);
-        return BooleanUtil.isTrue(flag);
+    private String tryLock(String key) {
+        String token = UUID.randomUUID().toString();
+        Boolean acquired = stringRedisTemplate.opsForValue().setIfAbsent(key, token, 10, TimeUnit.SECONDS);
+        return Boolean.TRUE.equals(acquired) ? token : null;
     }
 
-    private void unlock(String key) {
-        stringRedisTemplate.delete(key);
+    private void unlock(String key, String token) {
+        stringRedisTemplate.execute(UNLOCK_SCRIPT, Collections.singletonList(key), token);
     }
 
     private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);

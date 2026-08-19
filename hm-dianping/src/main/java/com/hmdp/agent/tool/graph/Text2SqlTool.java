@@ -11,6 +11,7 @@ import dev.langchain4j.agent.tool.Tool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -44,6 +45,9 @@ import java.util.regex.Pattern;
 public class Text2SqlTool {
 
     private static final Logger log = LoggerFactory.getLogger(Text2SqlTool.class);
+
+    @Value("${xxl.job.enabled:false}")
+    private boolean xxlJobEnabled;
 
     /**
      * Text2SQL 可查询业务表白名单（表域白名单）—— 排除用户隐私表（tb_user 含手机号/密码哈希等），
@@ -86,6 +90,13 @@ public class Text2SqlTool {
     /** 每2小时清除表名缓存，下次查询时从 MySQL 懒加载重建 */
     @Scheduled(fixedRate = 2 * 60 * 60 * 1000, initialDelay = 2 * 60 * 60 * 1000)
     public void scheduledEvictTableCache() {
+        if (xxlJobEnabled) {
+            return;
+        }
+        evictTableCache();
+    }
+
+    public void evictTableCache() {
         try {
             getSchemaService().evictTableNameCache();
         } catch (Exception e) {

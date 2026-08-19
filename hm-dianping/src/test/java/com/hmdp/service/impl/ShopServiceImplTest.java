@@ -4,20 +4,24 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
+import com.hmdp.utils.CacheClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
- * queryShopByName 纯单元测试：mock ShopMapper，校验 MyBatis-Plus 条件包装器
- * 覆盖带 typeId（分类内搜索）与不带 typeId（全局搜索）两种情况。
+ * queryShopByName / queryShopByType / queryShopsForMap 纯单元测试：mock ShopMapper + Redis（缓存 miss 走 dbFallback），
+ * 校验 MyBatis-Plus 条件包装器。
  */
 class ShopServiceImplTest {
 
@@ -25,10 +29,19 @@ class ShopServiceImplTest {
     private ShopServiceImpl shopService;
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp() {
         shopMapper = mock(ShopMapper.class);
         shopService = new ShopServiceImpl();
         ReflectionTestUtils.setField(shopService, "baseMapper", shopMapper);
+        // 缓存层：mock Redis（list 缓存 miss → 走 dbFallback，验证条件包装器）
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> ops = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(ops);
+        when(ops.get(anyString())).thenReturn(null);
+        ReflectionTestUtils.setField(shopService, "stringRedisTemplate", redis);
+        CacheClient cacheClient = new CacheClient(redis);
+        ReflectionTestUtils.setField(shopService, "cacheClient", cacheClient);
     }
 
     private void stubPage() {
@@ -101,7 +114,11 @@ class ShopServiceImplTest {
         shopService.queryShopByType(1, 1, null, null, null, "", "快餐小吃");
         String sql = capturedSqlSegment();
         assertTrue(sql.contains("food_category"), "带 foodCategory 时应包含 food_category 过滤, actual: " + sql);
-        assertTrue(sql.contains("快餐小吃"), "应按细分过滤, actual: " + sql);
+        // eq 值为参数化占位符，字面值在参数 Map 中
+        ArgumentCaptor<QueryWrapper<Shop>> captor = ArgumentCaptor.forClass(QueryWrapper.class);
+        verify(shopMapper).selectPage(any(Page.class), captor.capture());
+        assertTrue(captor.getValue().getParamNameValuePairs().containsValue("快餐小吃"),
+                "应按细分过滤（参数值=快餐小吃）");
     }
 
     @Test

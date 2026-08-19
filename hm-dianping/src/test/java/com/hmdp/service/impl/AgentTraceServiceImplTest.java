@@ -72,6 +72,14 @@ class AgentTraceServiceImplTest {
     }
 
     @Test
+    void listTraces_withoutUser_doesNotQueryAllRecords() {
+        Result r = agentTraceService.listTraces(null, 1, 20);
+
+        assertFalse(r.getSuccess());
+        verify(agentTraceService, never()).query();
+    }
+
+    @Test
     void traceDetail_findsByTraceId() {
         stubQuery(Collections.singletonList(new AgentTrace().setTraceId("xyz")));
         Result r = agentTraceService.traceDetail(1L, "xyz");
@@ -85,6 +93,14 @@ class AgentTraceServiceImplTest {
     void traceDetail_emptyTraceId_fails() {
         assertFalse(agentTraceService.traceDetail(1L, null).getSuccess());
         assertFalse(agentTraceService.traceDetail(1L, "").getSuccess());
+    }
+
+    @Test
+    void traceDetail_withoutUser_doesNotQueryAllRecords() {
+        Result r = agentTraceService.traceDetail(null, "xyz");
+
+        assertFalse(r.getSuccess());
+        verify(agentTraceService, never()).query();
     }
 
     @Test

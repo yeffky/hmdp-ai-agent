@@ -69,7 +69,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             return;
         }
         Long userId = UserHolder.getUser().getId();
-        String key = "blog:liked:" + userId;
+        String key = "blog:liked:" + blog.getId();
         Double score = stringRedisTemplate.opsForZSet().score(key, userId.toString());
         blog.setIsLike(score != null);
     }

@@ -56,6 +56,11 @@ public class RetrievalService {
      * 混合检索：LLM 改写 → 语义向量 + BM25 双路召回 → RRF 融合 → Rerank 重排序。
      */
     public List<SearchResult> search(String query) {
+        return search(query, topK);
+    }
+
+    public List<SearchResult> search(String query, int requestedTopK) {
+        int resultTopK = Math.max(1, Math.min(requestedTopK, 50));
         // 1. LLM 改写查询
         List<String> variantQueries = rewriter.rewrite(query);
         log.info("Query rewritten to {} variants: {}", variantQueries.size(), variantQueries);
@@ -64,12 +69,12 @@ public class RetrievalService {
         List<List<SearchResult>> allResultLists = new ArrayList<>();
         for (String variant : variantQueries) {
             // 语义检索
-            List<SearchResult> vecResults = singleVectorSearch(variant);
+            List<SearchResult> vecResults = singleVectorSearch(variant, resultTopK);
             if (!vecResults.isEmpty()) {
                 allResultLists.add(vecResults);
             }
             // BM25 关键词检索
-            List<SearchResult> kwResults = bm25Index.search(variant, topK * 2);
+            List<SearchResult> kwResults = bm25Index.search(variant, resultTopK * 2);
             if (!kwResults.isEmpty()) {
                 allResultLists.add(kwResults);
             }
@@ -82,35 +87,35 @@ public class RetrievalService {
         // 单路直接返回（跳过 RRF）
         if (allResultLists.size() == 1) {
             List<SearchResult> single = allResultLists.get(0);
-            return single.size() > topK ? single.subList(0, topK) : single;
+            return single.size() > resultTopK ? single.subList(0, resultTopK) : single;
         }
 
         // 3. RRF 融合
-        List<SearchResult> fused = rrfFusion(allResultLists);
+        List<SearchResult> fused = rrfFusion(allResultLists, resultTopK);
         log.info("Hybrid retrieval: {} lists → RRF fused {} results",
                 allResultLists.size(), fused.size());
 
         // 4. Rerank 重排序
-        if (reranker != null && fused.size() > topK) {
-            fused = reranker.rerank(query, fused, topK);
+        if (reranker != null && fused.size() > resultTopK) {
+            fused = reranker.rerank(query, fused, resultTopK);
         }
 
-        return fused.size() > topK ? fused.subList(0, topK) : fused;
+        return fused.size() > resultTopK ? fused.subList(0, resultTopK) : fused;
     }
 
     /** 单路向量检索 */
-    private List<SearchResult> singleVectorSearch(String query) {
+    private List<SearchResult> singleVectorSearch(String query, int resultTopK) {
         float[] queryVector = embedding.embed(query);
         if (queryVector.length == 0) {
             log.warn("查询向量化失败: {}", query);
             return Collections.emptyList();
         }
         // 每路多取一些，给 RRF 更多候选
-        return store.search(queryVector, topK * 2, scoreThreshold);
+        return store.search(queryVector, resultTopK * 2, scoreThreshold);
     }
 
     /** RRF 融合多路结果 */
-    private List<SearchResult> rrfFusion(List<List<SearchResult>> allResults) {
+    private List<SearchResult> rrfFusion(List<List<SearchResult>> allResults, int resultTopK) {
         // chunkId -> accumulated RRF score
         Map<String, Double> rrfScores = new LinkedHashMap<>();
         Map<String, SearchResult> bestHit = new HashMap<>();
@@ -133,7 +138,7 @@ public class RetrievalService {
         // 按 RRF 分数降序排列
         List<SearchResult> fused = rrfScores.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .limit(topK)
+                .limit(resultTopK)
                 .map(e -> {
                     SearchResult sr = bestHit.get(e.getKey());
                     sr.setRrfScore(e.getValue());

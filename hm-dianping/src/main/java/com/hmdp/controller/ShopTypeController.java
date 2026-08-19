@@ -6,6 +6,7 @@ import cn.hutool.json.JSONUtil;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.ShopType;
 import com.hmdp.service.IShopTypeService;
+import com.hmdp.utils.RedisConstants;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -52,6 +53,8 @@ public class ShopTypeController {
         }
 
         stringRedisTemplate.opsForList().rightPushAll(key, shopTypeList.stream().map((JSONUtil::toJsonStr)).collect(Collectors.toList()));
+        // 类型几乎静态：长 TTL 兜底（数据变更可手动删 key 或重启后重建）
+        stringRedisTemplate.expire(key, RedisConstants.CACHE_SHOP_TYPE_TTL, java.util.concurrent.TimeUnit.MINUTES);
 
         return Result.ok(shopTypeList);
     }

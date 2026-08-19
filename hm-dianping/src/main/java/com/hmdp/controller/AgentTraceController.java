@@ -48,19 +48,24 @@ public class AgentTraceController {
     @GetMapping("/list")
     public Result list(@RequestParam(value = "current", defaultValue = "1") Integer current,
                        @RequestParam(value = "size", defaultValue = "20") Integer size) {
-        return agentTraceService.listTraces(uid(), current, size);
+        Long userId = uid();
+        return userId == null ? Result.fail("请先登录") : agentTraceService.listTraces(userId, current, size);
     }
 
     /** 按 traceId 查当前用户的一条详情（越权返回 null） */
     @GetMapping("/{traceId}")
     public Result detail(@PathVariable String traceId) {
-        return agentTraceService.traceDetail(uid(), traceId);
+        Long userId = uid();
+        return userId == null ? Result.fail("请先登录") : agentTraceService.traceDetail(userId, traceId);
     }
 
     /** 按 traceId 查 LLM 调用级时间线（先校验轨迹归属当前用户） */
     @GetMapping("/llm/{traceId}")
     public Result llmTrace(@PathVariable String traceId) {
         Long userId = uid();
+        if (userId == null) {
+            return Result.fail("请先登录");
+        }
         Integer cnt = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM agent_trace WHERE trace_id = ? AND user_id = ?",
                 Integer.class, traceId, userId);
@@ -77,6 +82,9 @@ public class AgentTraceController {
     @GetMapping("/summary")
     public Result summary() {
         Long userId = uid();
+        if (userId == null) {
+            return Result.fail("请先登录");
+        }
         Map<String, Object> m = new LinkedHashMap<>();
         try {
             m.putAll(queryOne(
@@ -98,6 +106,9 @@ public class AgentTraceController {
     @GetMapping("/trends")
     public Result trends(@RequestParam(value = "range", defaultValue = "24h") String range) {
         Long userId = uid();
+        if (userId == null) {
+            return Result.fail("请先登录");
+        }
         String bucket = "24h".equals(range) ? "%Y-%m-%d %H:00" : "%Y-%m-%d";
         int hours = "24h".equals(range) ? 24 : ("7d".equals(range) ? 24 * 7 : 24 * 30);
         Map<String, Object> m = new LinkedHashMap<>();
@@ -124,6 +135,9 @@ public class AgentTraceController {
     @GetMapping("/stages")
     public Result stages() {
         Long userId = uid();
+        if (userId == null) {
+            return Result.fail("请先登录");
+        }
         try {
             return Result.ok(jdbc.queryForList(
                     "SELECT t.stage, COUNT(*) AS calls, " +
