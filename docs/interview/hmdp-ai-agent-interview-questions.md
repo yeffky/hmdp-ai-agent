@@ -34,9 +34,9 @@
 
 ## 2. 面试前必须校准的代码事实
 
-### 2.1 当前图不是 README 中的“六节点图”
+### 2.1 当前图结构（五个 StateGraph 节点）
 
-README 仍保留过渡期的六节点描述：Context → Planner → Executor → Observer → Judge → Answer。当前 `GraphConfig` 实际编译的节点是：
+README 已同步为当前五节点描述。`GraphConfig` 实际编译的节点是：
 
 ```text
 START
@@ -52,7 +52,7 @@ Context → Planner ──简单问题/无法满足──→ Answer → END
 
 - 观察逻辑主要在 `ToolNode` 中完成：判断空结果、注入“换一种思路”的提示、把工具结果追加到消息通道。
 - 充分性和继续执行逻辑主要在 `AgentNode` 及 skill SOP 中完成。
-- `Executor` 和 `Observer/Judge` 是历史设计或职责已经收敛后的概念，不要面试时说当前代码仍然存在这些独立节点。
+- 早期拆分的执行、观察和信息充分性判断职责已经收敛，不要面试时说当前代码仍然存在这些独立节点。
 
 ### 2.2 卡片协议的主路径已经从文本标记切到 `showCards`
 
@@ -237,7 +237,7 @@ POST /voucher-order/seckill/{id}
 
 ### Q8：项目当前有多少个 Agent 节点？
 
-答：按当前 `GraphConfig` 是 5 个：Context、Planner、Agent、Tools、Answer。README 中的 Observer、Judge 是历史架构描述，目前观察和判断职责已经合并进 ToolNode、AgentNode 和 skill SOP。这个问题经常用来检查是否真的读过代码。
+答：按当前 `GraphConfig` 是 5 个：Context、Planner、Agent、Tools、Answer。观察和判断职责已经合并进 ToolNode、AgentNode 和 skill SOP。这个问题经常用来检查是否真的读过代码。
 
 ### Q9：为什么 Planner 不直接选择具体工具？
 
@@ -800,7 +800,7 @@ score(d) = Σ 1 / (k + rank_i(d))
 ## 20. 最后一天冲刺清单
 
 - 能在 30 秒讲完项目定位，在 2 分钟讲完 Agent 和秒杀两条链路。
-- 能画出当前 5 节点状态图，不把旧 README 的 Observer/Judge 当成当前代码。
+- 能画出当前 5 节点状态图，不把早期拆分的观察/判断职责误认为当前独立节点。
 - 能解释 Redis Lua、RabbitMQ confirm、consumer ACK、DLQ、唯一索引各自解决什么问题。
 - 能解释 logical expire、互斥锁、Lua 解锁、空值缓存和列表版本号。
 - 能解释 RAG 的切片、Embedding、BM25、RRF、Rerank 和幂等摄入。

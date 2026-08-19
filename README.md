@@ -33,28 +33,31 @@
   ┌──────────────────────────────────────────────────────┐
   │  LangGraph4j StateGraph                              │
   │                                                      │
-  │  Context → Planner → Executor → Observer → Judge    │
-  │              ↑           ↓          ↓         ↓      │
-  │              └── replan ←──┴── retryGate ←──┘       │
-  │                              ↓                      │
-  │                           Answer → SSE 流式输出      │
+  │  Context → Planner → Agent → Tools ──┐              │
+  │              ↑       ↑         │     │              │
+  │              └─ replan┘         └─────┘              │
+  │                    │                                │
+  │                  Answer → END                       │
   └──────────────────────────────────────────────────────┘
                         ↓
-              DeltaPostgresSaver (增量 checkpoint)
+       Controller 调用流式 LLM → SSE 输出
+                        ↓
+              DeltaPostgresSaver（checkpoint）
                         ↓
                    PostgreSQL
 ```
 
-### 六节点状态机
+### 五节点状态图
 
 | 节点 | 职责 |
 |------|------|
 | Context | 上下文组装（System Prompt + 用户画像 + 滑动窗口压缩 + 对话历史） |
 | Planner | 意图识别 + 计划制定（初始规划 / 重规划），支持 `cannot_fulfill` 能力边界拦截 |
-| Executor | LLM 选工具 → 执行 → 结果写入 scratchpad，错误分类分流（RETRYABLE / USER_FIXABLE / FATAL） |
-| Observer | 提取工具结果、剔除已完成步骤、空结果自动扩大搜索重试、确认恢复 LLM 校验 |
-| Judge | 信息充分性判断，决定 answer / replan |
-| Answer | 生成最终回答，支持流式（OpenAiStreamingChatModel）与预设回答统一管线 |
+| Agent | LLM 决策当前工具调用，按已选 skill 暴露工具；处理写操作确认、选项选择和重规划路由，但不直接执行普通工具 |
+| Tools | 由 `ToolExecutor` 确定性执行 Agent 产生的 pending tool call，将结果写回消息通道；空结果时注入换查询策略提示并回到 Agent |
+| Answer | 组装回答规则/预设/HITL 叙述并设置结束标记；实际流式 LLM 调用由 `ReactStreamController` 完成后通过 SSE 返回 |
+
+实际路由为：`START → Context → Planner`；Planner 根据状态进入 `Agent`、`Answer` 或自身重规划；Agent 进入 `Tools`、`Answer`、`Planner`、`Context` 或自身循环；Tools 通常回到 Agent；Answer 最终到 `END`。早期拆分的执行、观察和信息充分性判断职责，现已收敛到 `AgentNode`、`ToolNode`、`ToolExecutor` 和 skill SOP，不再作为独立图节点存在。
 
 ### 增量 Checkpoint 存储（DeltaPostgresSaver）
 
@@ -153,10 +156,10 @@ hm-dianping/src/main/java/com/hmdp/
 ├── agent/
 │   ├── graph/                              # LangGraph4j 状态机
 │   │   ├── GraphConfig.java                # 图编译 + DeltaPostgresSaver
-│   │   ├── ToolRegistry.java               # 10+ 工具注册
+│   │   ├── ToolRegistry.java               # 12 个工具对象 / 18 个 @Tool 规格注册
 │   │   ├── checkpoint/DeltaPostgresSaver.java
 │   │   ├── error/                          # ErrorCategory / ToolException
-│   │   ├── nodes/                          # 六节点实现
+│   │   ├── nodes/                          # Context/Planner/Agent/Tools/Answer 节点
 │   │   └── state/                          # ReActAgentState / StateSchema (Delta Channel)
 │   ├── memory/context/                     # 滑动窗口 + 上下文压缩
 │   └── tool/                               # Agent 工具
@@ -445,7 +448,7 @@ mvn spring-boot:run
 
 ```
 PostgreSQL connected (HikariCP): jdbc:postgresql://...
-ToolRegistry initialized with 6 tools:
+ToolRegistry initialized with 18 tools:
 ReAct Graph compiled with DeltaPostgresSaver
 Declaring exchange 'seckill.order.exchange', queue 'seckill.order.queue'...
 ```
