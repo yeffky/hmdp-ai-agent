@@ -57,6 +57,26 @@ describe('auth 续约去重（refreshToken 在 HttpOnly cookie）', () => {
     expect(sessionStorage.getItem('token')).toBe('t1')
   })
 
+  it('启动时没有 accessToken 会用 HttpOnly refreshToken 恢复登录态', async () => {
+    const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({
+      data: { success: true, data: { accessToken: 'boot-token' } }
+    })
+
+    const { restoreSession } = await freshAuth()
+    expect(await restoreSession()).toBe(true)
+    expect(sessionStorage.getItem('token')).toBe('boot-token')
+    expect(postSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('启动时已有 accessToken 不会额外刷新', async () => {
+    sessionStorage.setItem('token', 'existing-token')
+    const postSpy = vi.spyOn(axios, 'post')
+    const { restoreSession } = await freshAuth()
+
+    expect(await restoreSession()).toBe(true)
+    expect(postSpy).not.toHaveBeenCalled()
+  })
+
   it('forceLogin 清 token，并发调用只提示/跳转一次', async () => {
     sessionStorage.setItem('token', 't')
     const { forceLogin } = await freshAuth()

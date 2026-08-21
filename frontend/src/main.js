@@ -10,4 +10,13 @@ import './styles/tokens.css'
 import './styles/base.css'
 import './styles/components.css'
 
-createApp(App).use(createPinia()).use(router).mount('#app')
+import { restoreSession } from './utils/auth'
+
+async function bootstrap() {
+  // refreshToken 在 HttpOnly Cookie 中，浏览器重开后需先换回 accessToken，
+  // 否则受保护页面会在任何请求发出前被组件误判为未登录。
+  await restoreSession()
+  createApp(App).use(createPinia()).use(router).mount('#app')
+}
+
+bootstrap()

@@ -36,6 +36,15 @@ export async function refreshAccessToken() {
 }
 
 /**
+ * 应用启动时恢复登录态：浏览器重开后 sessionStorage 中没有 accessToken，
+ * 但 HttpOnly refreshToken Cookie 仍可能有效，此时需要主动续约一次。
+ */
+export async function restoreSession() {
+  if (sessionStorage.getItem('token')) return true
+  return refreshAccessToken()
+}
+
+/**
  * 强制登出：清 accessToken + 一次性提示/跳转。
  * 注意：HttpOnly refreshToken cookie 无法从 JS 清除，靠后端 /user/logout 或会话失效自然失效。
  */
