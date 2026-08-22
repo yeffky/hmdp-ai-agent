@@ -32,6 +32,9 @@ build/
 # Nginx
 nginx-1.18.0/logs/
 nginx-1.18.0/temp/
+
+# Local build logs archived for reference
+docs/archive/build-logs/
 # Vue3 前端构建产物
 frontend/node_modules/
 frontend/dist/
@@ -61,6 +64,12 @@ tools/ssh/
 # Generated tokens / secrets
 **/tokens.txt
 **/*.token
+**/.env copy.example
+
+# crawl-amap 本地抓取/分类中间产物（最终可复现种子仅保留 seed_amap.sql）
+tools/crawl-amap/dist/*.json
+tools/crawl-amap/dist/*.txt
+tools/crawl-amap/dist/*.tsv
 
 # Maven local repo (accidentally tracked)
 **/.m2/

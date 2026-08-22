@@ -278,4 +278,4 @@ Consumer → Redisson 锁 → 事务落库（唯一索引兜底）
 | `service/impl/VoucherOrderServiceImpl.java` | Lua 校验 → 发消息（带 CorrelationData）；消费端落库（锁 + 唯一索引兜底） |
 | `resources/seckill.lua` | 原子库存校验/扣减/一人一单 |
 | `db/hmdp.sql` + `db/voucher_order_unique_index.sql` | tb_voucher_order 唯一索引 uk_user_voucher（幂等兜底） |
-| `docker-compose.server.yml` | RabbitMQ 3.12 + 管理台(15670) |
+| `deploy/infrastructure/docker-compose.server.yml` | RabbitMQ 3.12 + 管理台(15670) |

@@ -151,6 +151,25 @@ Consumer 异步消费 → Redisson 分布式锁 → 写库落单
 
 ## 项目结构
 
+### 顶层目录
+
+```text
+.
+├── hm-dianping/                 # Spring Boot 后端、Agent、RAG、数据库脚本和测试
+├── frontend/                    # Vue 3 前端、Vitest 测试和前端镜像构建文件
+├── deploy/                      # 生产配置、Docker 部署说明和基础设施编排
+│   └── infrastructure/          # PostgreSQL/RabbitMQ 等服务器基础设施
+├── nginx-1.18.0/                # 本地传统 Nginx 运行时和图片目录
+├── tools/                       # 种子数据、爬虫、图片生成和数据库检查工具
+├── load-test/                   # JMeter/Redis 压测脚本
+├── test_case/                   # 手工测试资料和截图
+├── docs/                        # 设计文档、面试资料和归档产物
+├── docker-compose.yml           # 本地 Qdrant/Ollama 依赖
+├── docker-compose.app.yml       # 后端/前端应用部署入口
+├── README.md                    # 项目说明和使用指南
+└── CLAUDE.md                    # 开发协作约定
+```
+
 ```
 hm-dianping/src/main/java/com/hmdp/
 ├── agent/
@@ -318,8 +337,8 @@ redis-server
 cd hmdp-ai-agent
 docker compose up -d
 
-# 服务器部署依赖：PostgreSQL + RabbitMQ（端口 5670/15670，密码用环境变量注入）
-docker compose -f docker-compose.server.yml up -d
+# 服务器基础设施依赖：PostgreSQL + RabbitMQ（端口 5670/15670，密码用环境变量注入）
+docker compose -f deploy/infrastructure/docker-compose.server.yml up -d
 
 # Ollama Embedding（本地方案）
 ollama serve
@@ -488,7 +507,7 @@ curl -X POST http://localhost:8081/kb/ingest \
 | Agent 对话无响应 | 检查 DeepSeek API Key 和网络连通性；确认 `deepseek.base-url` 配置正确 |
 | checkpoint 加载慢 | 首次启动后执行 `DELETE FROM lg4jcheckpoint` 清空旧全量数据 |
 | Qdrant 连接失败 | `docker compose ps` 确认 Qdrant 运行中；访问 `http://localhost:6333/health` |
-| RabbitMQ 连接失败 | `docker compose -f docker-compose.server.yml ps` 确认 RabbitMQ 运行中；检查 `application.yaml` 的 `spring.rabbitmq` 端口（host 映射 5670） |
+| RabbitMQ 连接失败 | `docker compose -f deploy/infrastructure/docker-compose.server.yml ps` 确认 RabbitMQ 运行中；检查 `application.yaml` 的 `spring.rabbitmq` 端口（host 映射 5670） |
 | 秒杀消息堆积/DLQ 有消息 | 查看 Consumer 日志确认失败原因；DLQ 队列 `seckill.order.dlq` 手动消费后排查 |
 | Embedding 失败 | Ollama 是否启动？`ollama list` 确认 `bge-m3` 已下载 |
 | SSE 流式不工作 | Nginx `proxy_buffering off` 是否配置？浏览器 Network 面板查看 EventStream |

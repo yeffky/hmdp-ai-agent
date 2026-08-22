@@ -2,6 +2,8 @@
 
 本目录用于部署当前应用。默认 Compose 只启动后端和前端 Nginx；Qdrant 通过 `rag` profile 按需启动。MySQL、Redis、RabbitMQ、PostgreSQL 通过 `deploy/.env` 连接已有服务，不会在本 Compose 中重复创建。
 
+服务器基础设施的独立编排文件位于 `deploy/infrastructure/docker-compose.server.yml`，RabbitMQ 配置位于同目录的 `rabbitmq.conf`；应用 Compose 与基础设施 Compose 分开管理。
+
 ## 首次部署
 
 1. 在服务器准备 Docker Engine 和 Docker Compose v2。
